@@ -28,6 +28,7 @@ import (
 	"context"
 	"fmt"
 
+	"go.opentelemetry.io/otel/trace"
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
@@ -54,6 +55,7 @@ import (
 	"go.temporal.io/server/common/persistence/visibility/manager"
 	"go.temporal.io/server/common/searchattribute"
 	"go.temporal.io/server/common/tasktoken"
+	"go.temporal.io/server/common/telemetry"
 	"go.temporal.io/server/internal/effect"
 	"go.temporal.io/server/service/history/api"
 	"go.temporal.io/server/service/history/api/recordworkflowtaskstarted"
@@ -139,6 +141,11 @@ func (handler *WorkflowTaskCompletedHandler) Invoke(
 	if err0 != nil {
 		return nil, consts.ErrDeserializingToken
 	}
+
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		telemetry.WorkflowIDKey(token.WorkflowId),
+	)
 
 	workflowLease, err := handler.workflowConsistencyChecker.GetWorkflowLeaseWithConsistencyCheck(
 		ctx,
@@ -851,6 +858,11 @@ func (handler *WorkflowTaskCompletedHandler) withNewWorkflowTask(
 	if err != nil {
 		return nil, consts.ErrDeserializingToken
 	}
+
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		telemetry.WorkflowIDKey(taskToken.WorkflowId),
+	)
 
 	taskToken = tasktoken.NewWorkflowTaskToken(
 		taskToken.GetNamespaceId(),
