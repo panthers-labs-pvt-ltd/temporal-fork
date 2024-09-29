@@ -2010,6 +2010,10 @@ func (wh *WorkflowHandler) SignalWithStartWorkflowExecution(ctx context.Context,
 		return nil, err
 	}
 
+	trace.SpanFromContext(ctx).SetAttributes(
+		telemetry.WorkflowIDKey(request.WorkflowId),
+	)
+
 	if request.GetSignalName() == "" {
 		return nil, errSignalNameNotSet
 	}
@@ -2119,6 +2123,10 @@ func (wh *WorkflowHandler) ResetWorkflowExecution(ctx context.Context, request *
 		return nil, err
 	}
 
+	trace.SpanFromContext(ctx).SetAttributes(
+		telemetry.WorkflowIDKey(request.WorkflowExecution.WorkflowId),
+	)
+
 	enums.SetDefaultResetReapplyType(&request.ResetReapplyType)
 	if _, validType := enumspb.ResetReapplyType_name[int32(request.GetResetReapplyType())]; !validType {
 		return nil, serviceerror.NewInternal(fmt.Sprintf("unknown reset reapply type: %v", request.GetResetReapplyType()))
@@ -2153,6 +2161,10 @@ func (wh *WorkflowHandler) TerminateWorkflowExecution(ctx context.Context, reque
 		return nil, err
 	}
 
+	trace.SpanFromContext(ctx).SetAttributes(
+		telemetry.WorkflowIDKey(request.WorkflowExecution.WorkflowId),
+	)
+
 	namespaceID, err := wh.namespaceRegistry.GetNamespaceID(namespace.Name(request.GetNamespace()))
 	if err != nil {
 		return nil, err
@@ -2181,6 +2193,10 @@ func (wh *WorkflowHandler) DeleteWorkflowExecution(ctx context.Context, request 
 	if err := validateExecution(request.WorkflowExecution); err != nil {
 		return nil, err
 	}
+
+	trace.SpanFromContext(ctx).SetAttributes(
+		telemetry.WorkflowIDKey(request.WorkflowExecution.WorkflowId),
+	)
 
 	namespaceID, err := wh.namespaceRegistry.GetNamespaceID(namespace.Name(request.GetNamespace()))
 	if err != nil {
@@ -2625,6 +2641,11 @@ func (wh *WorkflowHandler) RespondQueryTaskCompleted(
 		return nil, errRequestNotSet
 	}
 
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(
+		telemetry.WorkerKey(),
+	)
+
 	queryTaskToken, err := wh.tokenSerializer.DeserializeQueryTaskToken(request.TaskToken)
 	if err != nil {
 		return nil, errDeserializingToken
@@ -2736,6 +2757,10 @@ func (wh *WorkflowHandler) QueryWorkflow(ctx context.Context, request *workflows
 	if request.Query.GetQueryType() == "" {
 		return nil, errQueryTypeNotSet
 	}
+
+	trace.SpanFromContext(ctx).SetAttributes(
+		telemetry.WorkflowIDKey(request.Execution.WorkflowId),
+	)
 
 	enums.SetDefaultQueryRejectCondition(&request.QueryRejectCondition)
 
