@@ -1910,8 +1910,7 @@ func (wh *WorkflowHandler) RequestCancelWorkflowExecution(ctx context.Context, r
 
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(
-		telemetry.ClientIdentityKey(request.Identity),
-		telemetry.WorkerKey(),
+		telemetry.WorkflowIDKey(request.WorkflowExecution.WorkflowId),
 	)
 
 	if err := validateExecution(request.WorkflowExecution); err != nil {
