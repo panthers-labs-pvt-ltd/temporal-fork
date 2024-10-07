@@ -33,7 +33,11 @@ var (
 	// so we don't have to specify its value in every test.
 	// If TaskGeneratorFactory is not provided as an fx Option,
 	// fx.Populate in fx.go and server start up will still fail.
-	taskGeneratorProvider = NewTaskGeneratorProvider()
+	taskGeneratorProvider TaskGeneratorProvider = defaultTaskGeneratorProvider
+)
+
+var (
+	defaultTaskGeneratorProvider = &taskGeneratorProviderImpl{}
 )
 
 type (
@@ -44,8 +48,20 @@ type (
 	taskGeneratorProviderImpl struct{}
 )
 
-func NewTaskGeneratorProvider() TaskGeneratorProvider {
-	return &taskGeneratorProviderImpl{}
+func PopulateTaskGeneratorProvider(providerOverride TaskGeneratorProvider) {
+	if providerOverride == defaultTaskGeneratorProvider {
+		return
+	}
+
+	taskGeneratorProvider = providerOverride
+}
+
+func GetTaskGeneratorProvider() TaskGeneratorProvider {
+	return taskGeneratorProvider
+}
+
+func DefaultTaskGeneratorProvider() TaskGeneratorProvider {
+	return defaultTaskGeneratorProvider
 }
 
 func (p *taskGeneratorProviderImpl) NewTaskGenerator(
