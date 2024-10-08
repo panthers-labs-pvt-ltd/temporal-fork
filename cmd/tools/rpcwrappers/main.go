@@ -99,6 +99,7 @@ var (
 		"metricsClient.admin.StreamWorkflowReplicationMessages":     true,
 		"retryableClient.admin.StreamWorkflowReplicationMessages":   true,
 		"lazyClient.admin.StreamWorkflowReplicationMessages":        true,
+		"proxyServer.admin.StreamWorkflowReplicationMessages":       true,
 		"client.history.StreamWorkflowReplicationMessages":          true,
 		"metricsClient.history.StreamWorkflowReplicationMessages":   true,
 		"retryableClient.history.StreamWorkflowReplicationMessages": true,
@@ -546,6 +547,29 @@ func (c *retryableClient) {{.Method}}(
 `)
 }
 
+func generateProxyServer(w io.Writer, service service) {
+	writeTemplatedCode(w, service, `
+package {{.ServiceName}}
+
+import (
+	"context"
+
+	"{{.ServicePackagePath}}"
+	"google.golang.org/grpc"
+)
+`)
+
+	writeTemplatedMethods(w, service, "proxyServer", `
+func (s *adminServiceProxyServer) {{.Method}}(ctx context.Context, in0 {{.RequestType}}) ({{.ResponseType}}, error) {
+	if !s.access.IsAllowed("{{.Method}}") {
+		return nil, status.Errorf(codes.PermissionDenied, "Calling method {{.Method}} is not allowed.")
+	}
+
+	return s.adminClient.{{.Method}}(ctx, in0)
+}
+`)
+}
+
 func generateLazyClient(w io.Writer, service service) {
 	writeTemplatedCode(w, service, `
 package {{.ServiceName}}
@@ -618,5 +642,9 @@ func main() {
 	callWithFile(generateRetryableClient, svc, "retryable_client", licenseText)
 	if svc.name == "admin" || svc.name == "frontend" {
 		callWithFile(generateLazyClient, svc, "lazy_client", "")
+	}
+
+	if svc.name == "admin" {
+		callWithFile(generateProxyServer, svc, "proxy_server", "")
 	}
 }
