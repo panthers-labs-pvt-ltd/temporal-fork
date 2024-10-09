@@ -32,13 +32,13 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/suite"
 	"go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	taskqueuepb "go.temporal.io/api/taskqueue/v1"
+
+	"go.temporal.io/server/api/matchingservice/v1"
 	"go.temporal.io/server/api/matchingservicemock/v1"
 	"go.temporal.io/server/api/persistence/v1"
 	"go.temporal.io/server/api/taskqueue/v1"
@@ -47,6 +47,7 @@ import (
 	"go.temporal.io/server/common/namespace"
 	"go.temporal.io/server/common/tqid"
 	"go.temporal.io/server/common/worker_versioning"
+	"go.uber.org/mock/gomock"
 )
 
 const (
@@ -587,6 +588,10 @@ func (m *mockUserDataManager) UpdateUserData(_ context.Context, _ UserDataUpdate
 	}
 	m.data = &persistence.VersionedTaskQueueUserData{Data: data, Version: m.data.Version + 1}
 	return nil
+}
+
+func (m *mockUserDataManager) HandleGetUserDataRequest(ctx context.Context, req *matchingservice.GetTaskQueueUserDataRequest) (*matchingservice.GetTaskQueueUserDataResponse, error) {
+	panic("unused")
 }
 
 func (m *mockUserDataManager) updateVersioningData(data *persistence.VersioningData) {
