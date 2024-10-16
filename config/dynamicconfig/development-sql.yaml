@@ -55,3 +55,5 @@ history.enableWorkflowExecutionTimeoutTimer:
   - value: true
 history.hostLevelCacheMaxSize:
   - value: 8192
+frontend.enableExecuteMultiOperation:
+  - value: true
