@@ -535,6 +535,10 @@ func (wh *WorkflowHandler) ExecuteMultiOperation(
 		return nil, errMultiOpNotStartAndUpdate
 	}
 
+	trace.SpanFromContext(ctx).SetAttributes(
+		telemetry.WorkflowIDKey(request.Operations[0].GetStartWorkflow().WorkflowId),
+	)
+
 	historyReq, err := wh.convertToHistoryMultiOperationRequest(namespaceID, request)
 	if err != nil {
 		return nil, err
