@@ -1352,16 +1352,20 @@ func (wh *WorkflowHandler) RespondActivityTaskCompleted(
 		return nil, errRequestNotSet
 	}
 
+	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
+	if err != nil {
+		return nil, errDeserializingToken
+	}
+
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(
 		telemetry.ClientIdentityKey(request.Identity),
 		telemetry.WorkerKey(),
 	)
+	span.SetAttributes(
+		telemetry.WorkflowIDKey(taskToken.GetWorkflowId()),
+	)
 
-	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
-	if err != nil {
-		return nil, errDeserializingToken
-	}
 	namespaceId := namespace.ID(taskToken.GetNamespaceId())
 	namespaceEntry, err := wh.namespaceRegistry.GetNamespaceByID(namespaceId)
 	if err != nil {
@@ -1533,16 +1537,20 @@ func (wh *WorkflowHandler) RespondActivityTaskFailed(
 		return nil, errRequestNotSet
 	}
 
+	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
+	if err != nil {
+		return nil, errDeserializingToken
+	}
+
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(
 		telemetry.ClientIdentityKey(request.Identity),
 		telemetry.WorkerKey(),
 	)
+	span.SetAttributes(
+		telemetry.WorkflowIDKey(taskToken.GetWorkflowId()),
+	)
 
-	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
-	if err != nil {
-		return nil, errDeserializingToken
-	}
 	namespaceID := namespace.ID(taskToken.GetNamespaceId())
 	namespaceEntry, err := wh.namespaceRegistry.GetNamespaceByID(namespaceID)
 	if err != nil {
@@ -1626,6 +1634,9 @@ func (wh *WorkflowHandler) RespondActivityTaskFailedById(ctx context.Context, re
 	span.SetAttributes(
 		telemetry.ClientIdentityKey(request.Identity),
 		telemetry.WorkerKey(),
+	)
+	span.SetAttributes(
+		telemetry.WorkflowIDKey(request.WorkflowId),
 	)
 
 	namespaceID, err := wh.namespaceRegistry.GetNamespaceID(namespace.Name(request.GetNamespace()))
@@ -1738,16 +1749,20 @@ func (wh *WorkflowHandler) RespondActivityTaskCanceled(ctx context.Context, requ
 		return nil, errRequestNotSet
 	}
 
+	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
+	if err != nil {
+		return nil, errDeserializingToken
+	}
+
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(
 		telemetry.ClientIdentityKey(request.Identity),
 		telemetry.WorkerKey(),
 	)
+	span.SetAttributes(
+		telemetry.WorkflowIDKey(taskToken.GetWorkflowId()),
+	)
 
-	taskToken, err := wh.tokenSerializer.Deserialize(request.TaskToken)
-	if err != nil {
-		return nil, errDeserializingToken
-	}
 	namespaceID := namespace.ID(taskToken.GetNamespaceId())
 	namespaceEntry, err := wh.namespaceRegistry.GetNamespaceByID(namespaceID)
 	if err != nil {
@@ -1814,6 +1829,9 @@ func (wh *WorkflowHandler) RespondActivityTaskCanceledById(ctx context.Context, 
 	span.SetAttributes(
 		telemetry.ClientIdentityKey(request.Identity),
 		telemetry.WorkerKey(),
+	)
+	span.SetAttributes(
+		telemetry.WorkflowIDKey(request.WorkflowId),
 	)
 
 	namespaceID, err := wh.namespaceRegistry.GetNamespaceID(namespace.Name(request.GetNamespace()))
