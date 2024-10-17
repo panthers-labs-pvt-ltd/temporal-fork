@@ -99,7 +99,7 @@ var (
 		"metricsClient.admin.StreamWorkflowReplicationMessages":     true,
 		"retryableClient.admin.StreamWorkflowReplicationMessages":   true,
 		"lazyClient.admin.StreamWorkflowReplicationMessages":        true,
-		"proxyServer.admin.StreamWorkflowReplicationMessages":       true,
+		"aclServer.admin.StreamWorkflowReplicationMessages":         true,
 		"client.history.StreamWorkflowReplicationMessages":          true,
 		"metricsClient.history.StreamWorkflowReplicationMessages":   true,
 		"retryableClient.history.StreamWorkflowReplicationMessages": true,
@@ -547,7 +547,7 @@ func (c *retryableClient) {{.Method}}(
 `)
 }
 
-func generateProxyServer(w io.Writer, service service) {
+func generateACLServer(w io.Writer, service service) {
 	writeTemplatedCode(w, service, `
 package {{.ServiceName}}
 
@@ -559,13 +559,13 @@ import (
 )
 `)
 
-	writeTemplatedMethods(w, service, "proxyServer", `
-func (s *adminServiceProxyServer) {{.Method}}(ctx context.Context, in0 {{.RequestType}}) ({{.ResponseType}}, error) {
+	writeTemplatedMethods(w, service, "aclServer", `
+func (s *adminServiceAuth) {{.Method}}(ctx context.Context, in0 {{.RequestType}}) ({{.ResponseType}}, error) {
 	if !s.access.IsAllowed("{{.Method}}") {
 		return nil, status.Errorf(codes.PermissionDenied, "Calling method {{.Method}} is not allowed.")
 	}
 
-	return s.adminClient.{{.Method}}(ctx, in0)
+	return s.delegate.{{.Method}}(ctx, in0)
 }
 `)
 }
@@ -645,6 +645,6 @@ func main() {
 	}
 
 	if svc.name == "admin" {
-		callWithFile(generateProxyServer, svc, "proxy_server", "")
+		callWithFile(generateACLServer, svc, "acl_server", "")
 	}
 }
