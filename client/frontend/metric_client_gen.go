@@ -425,6 +425,20 @@ func (c *metricClient) ListWorkflowExecutions(
 	return c.client.ListWorkflowExecutions(ctx, request, opts...)
 }
 
+func (c *metricClient) ModifyWorkflowExecutionProperties(
+	ctx context.Context,
+	request *workflowservice.ModifyWorkflowExecutionPropertiesRequest,
+	opts ...grpc.CallOption,
+) (_ *workflowservice.ModifyWorkflowExecutionPropertiesResponse, retError error) {
+
+	metricsHandler, startTime := c.startMetricsRecording(ctx, "FrontendClientModifyWorkflowExecutionProperties")
+	defer func() {
+		c.finishMetricsRecording(metricsHandler, startTime, retError)
+	}()
+
+	return c.client.ModifyWorkflowExecutionProperties(ctx, request, opts...)
+}
+
 func (c *metricClient) PatchSchedule(
 	ctx context.Context,
 	request *workflowservice.PatchScheduleRequest,

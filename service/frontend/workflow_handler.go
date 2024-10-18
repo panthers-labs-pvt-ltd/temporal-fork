@@ -2055,6 +2055,10 @@ func (wh *WorkflowHandler) ResetWorkflowExecution(ctx context.Context, request *
 	return &workflowservice.ResetWorkflowExecutionResponse{RunId: resp.GetRunId()}, nil
 }
 
+func (wh *WorkflowHandler) ModifyWorkflowExecutionProperties(ctx context.Context, request *workflowservice.ModifyWorkflowExecutionPropertiesRequest) (_ *workflowservice.ModifyWorkflowExecutionPropertiesResponse, retError error) {
+	return &workflowservice.ModifyWorkflowExecutionPropertiesResponse{}, serviceerror.NewUnimplemented("ModifyWorkflowExecutionProperties is unimplemented")
+}
+
 // TerminateWorkflowExecution terminates an existing workflow execution by recording WorkflowExecutionTerminated event
 // in the history and immediately terminating the execution instance.
 func (wh *WorkflowHandler) TerminateWorkflowExecution(ctx context.Context, request *workflowservice.TerminateWorkflowExecutionRequest) (_ *workflowservice.TerminateWorkflowExecutionResponse, retError error) {

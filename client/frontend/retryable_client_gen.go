@@ -455,6 +455,21 @@ func (c *retryableClient) ListWorkflowExecutions(
 	return resp, err
 }
 
+func (c *retryableClient) ModifyWorkflowExecutionProperties(
+	ctx context.Context,
+	request *workflowservice.ModifyWorkflowExecutionPropertiesRequest,
+	opts ...grpc.CallOption,
+) (*workflowservice.ModifyWorkflowExecutionPropertiesResponse, error) {
+	var resp *workflowservice.ModifyWorkflowExecutionPropertiesResponse
+	op := func(ctx context.Context) error {
+		var err error
+		resp, err = c.client.ModifyWorkflowExecutionProperties(ctx, request, opts...)
+		return err
+	}
+	err := backoff.ThrottleRetryContext(ctx, op, c.policy, c.isRetryable)
+	return resp, err
+}
+
 func (c *retryableClient) PatchSchedule(
 	ctx context.Context,
 	request *workflowservice.PatchScheduleRequest,

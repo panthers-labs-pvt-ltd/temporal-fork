@@ -625,6 +625,26 @@ func (mr *MockWorkflowServiceClientMockRecorder) ListWorkflowExecutions(arg0, ar
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListWorkflowExecutions", reflect.TypeOf((*MockWorkflowServiceClient)(nil).ListWorkflowExecutions), varargs...)
 }
 
+// ModifyWorkflowExecutionProperties mocks base method.
+func (m *MockWorkflowServiceClient) ModifyWorkflowExecutionProperties(arg0 context.Context, arg1 *workflowservice.ModifyWorkflowExecutionPropertiesRequest, arg2 ...grpc.CallOption) (*workflowservice.ModifyWorkflowExecutionPropertiesResponse, error) {
+	m.ctrl.T.Helper()
+	varargs := []any{arg0, arg1}
+	for _, a := range arg2 {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "ModifyWorkflowExecutionProperties", varargs...)
+	ret0, _ := ret[0].(*workflowservice.ModifyWorkflowExecutionPropertiesResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ModifyWorkflowExecutionProperties indicates an expected call of ModifyWorkflowExecutionProperties.
+func (mr *MockWorkflowServiceClientMockRecorder) ModifyWorkflowExecutionProperties(arg0, arg1 any, arg2 ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{arg0, arg1}, arg2...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ModifyWorkflowExecutionProperties", reflect.TypeOf((*MockWorkflowServiceClient)(nil).ModifyWorkflowExecutionProperties), varargs...)
+}
+
 // PatchSchedule mocks base method.
 func (m *MockWorkflowServiceClient) PatchSchedule(arg0 context.Context, arg1 *workflowservice.PatchScheduleRequest, arg2 ...grpc.CallOption) (*workflowservice.PatchScheduleResponse, error) {
 	m.ctrl.T.Helper()
