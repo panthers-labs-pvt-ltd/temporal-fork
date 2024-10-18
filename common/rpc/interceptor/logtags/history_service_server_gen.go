@@ -150,8 +150,8 @@ func (wt *WorkflowTags) extractFromHistoryServiceServerRequest(req any) []tag.Ta
 		return nil
 	case *historyservice.ModifyWorkflowExecutionPropertiesRequest:
 		return []tag.Tag{
-			tag.WorkflowID(r.GetResetRequest().GetWorkflowExecution().GetWorkflowId()),
-			tag.WorkflowRunID(r.GetResetRequest().GetWorkflowExecution().GetRunId()),
+			tag.WorkflowID(r.GetModifyRequest().GetWorkflowExecution().GetWorkflowId()),
+			tag.WorkflowRunID(r.GetModifyRequest().GetWorkflowExecution().GetRunId()),
 		}
 	case *historyservice.PollMutableStateRequest:
 		return []tag.Tag{

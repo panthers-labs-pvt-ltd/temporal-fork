@@ -583,7 +583,7 @@ func (c *clientImpl) ModifyWorkflowExecutionProperties(
 	request *historyservice.ModifyWorkflowExecutionPropertiesRequest,
 	opts ...grpc.CallOption,
 ) (*historyservice.ModifyWorkflowExecutionPropertiesResponse, error) {
-	shardID := c.shardIDFromWorkflowID(request.GetNamespaceId(), request.GetResetRequest().GetWorkflowExecution().GetWorkflowId())
+	shardID := c.shardIDFromWorkflowID(request.GetNamespaceId(), request.GetModifyRequest().GetWorkflowExecution().GetWorkflowId())
 	var response *historyservice.ModifyWorkflowExecutionPropertiesResponse
 	op := func(ctx context.Context, client historyservice.HistoryServiceClient) error {
 		var err error
