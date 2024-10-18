@@ -26,6 +26,7 @@ package history
 
 import (
 	"context"
+	"go.temporal.io/server/service/history/api/modifyworkflowproperties"
 	"sync/atomic"
 	"time"
 
@@ -829,6 +830,14 @@ func (e *historyEngineImpl) ResetWorkflowExecution(
 	req *historyservice.ResetWorkflowExecutionRequest,
 ) (*historyservice.ResetWorkflowExecutionResponse, error) {
 	return resetworkflow.Invoke(ctx, req, e.shardContext, e.workflowConsistencyChecker)
+}
+
+// ModifyWorkflowExecutionProperties todo carly
+func (e *historyEngineImpl) ModifyWorkflowExecutionProperties(
+	ctx context.Context,
+	req *historyservice.ModifyWorkflowExecutionPropertiesRequest,
+) (*historyservice.ModifyWorkflowExecutionPropertiesResponse, error) {
+	return modifyworkflowproperties.Invoke(ctx, req, e.shardContext, e.workflowConsistencyChecker)
 }
 
 func (e *historyEngineImpl) NotifyNewHistoryEvent(
