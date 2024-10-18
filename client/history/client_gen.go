@@ -578,6 +578,26 @@ func (c *clientImpl) MergeDLQMessages(
 	return response, nil
 }
 
+func (c *clientImpl) ModifyWorkflowExecutionProperties(
+	ctx context.Context,
+	request *historyservice.ModifyWorkflowExecutionPropertiesRequest,
+	opts ...grpc.CallOption,
+) (*historyservice.ModifyWorkflowExecutionPropertiesResponse, error) {
+	shardID := c.shardIDFromWorkflowID(request.GetNamespaceId(), request.GetResetRequest().GetWorkflowExecution().GetWorkflowId())
+	var response *historyservice.ModifyWorkflowExecutionPropertiesResponse
+	op := func(ctx context.Context, client historyservice.HistoryServiceClient) error {
+		var err error
+		ctx, cancel := c.createContext(ctx)
+		defer cancel()
+		response, err = client.ModifyWorkflowExecutionProperties(ctx, request, opts...)
+		return err
+	}
+	if err := c.executeWithRedirect(ctx, shardID, op); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
 func (c *clientImpl) PollMutableState(
 	ctx context.Context,
 	request *historyservice.PollMutableStateRequest,

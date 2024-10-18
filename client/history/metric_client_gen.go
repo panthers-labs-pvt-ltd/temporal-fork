@@ -467,6 +467,20 @@ func (c *metricClient) MergeDLQMessages(
 	return c.client.MergeDLQMessages(ctx, request, opts...)
 }
 
+func (c *metricClient) ModifyWorkflowExecutionProperties(
+	ctx context.Context,
+	request *historyservice.ModifyWorkflowExecutionPropertiesRequest,
+	opts ...grpc.CallOption,
+) (_ *historyservice.ModifyWorkflowExecutionPropertiesResponse, retError error) {
+
+	metricsHandler, startTime := c.startMetricsRecording(ctx, "HistoryClientModifyWorkflowExecutionProperties")
+	defer func() {
+		c.finishMetricsRecording(metricsHandler, startTime, retError)
+	}()
+
+	return c.client.ModifyWorkflowExecutionProperties(ctx, request, opts...)
+}
+
 func (c *metricClient) PollMutableState(
 	ctx context.Context,
 	request *historyservice.PollMutableStateRequest,

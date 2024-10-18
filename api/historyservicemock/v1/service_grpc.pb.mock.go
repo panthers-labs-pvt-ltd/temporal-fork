@@ -686,6 +686,26 @@ func (mr *MockHistoryServiceClientMockRecorder) MergeDLQMessages(ctx, in any, op
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MergeDLQMessages", reflect.TypeOf((*MockHistoryServiceClient)(nil).MergeDLQMessages), varargs...)
 }
 
+// ModifyWorkflowExecutionProperties mocks base method.
+func (m *MockHistoryServiceClient) ModifyWorkflowExecutionProperties(ctx context.Context, in *historyservice.ModifyWorkflowExecutionPropertiesRequest, opts ...grpc.CallOption) (*historyservice.ModifyWorkflowExecutionPropertiesResponse, error) {
+	m.ctrl.T.Helper()
+	varargs := []any{ctx, in}
+	for _, a := range opts {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "ModifyWorkflowExecutionProperties", varargs...)
+	ret0, _ := ret[0].(*historyservice.ModifyWorkflowExecutionPropertiesResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ModifyWorkflowExecutionProperties indicates an expected call of ModifyWorkflowExecutionProperties.
+func (mr *MockHistoryServiceClientMockRecorder) ModifyWorkflowExecutionProperties(ctx, in any, opts ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{ctx, in}, opts...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ModifyWorkflowExecutionProperties", reflect.TypeOf((*MockHistoryServiceClient)(nil).ModifyWorkflowExecutionProperties), varargs...)
+}
+
 // PollMutableState mocks base method.
 func (m *MockHistoryServiceClient) PollMutableState(ctx context.Context, in *historyservice.PollMutableStateRequest, opts ...grpc.CallOption) (*historyservice.PollMutableStateResponse, error) {
 	m.ctrl.T.Helper()
@@ -2029,6 +2049,21 @@ func (m *MockHistoryServiceServer) MergeDLQMessages(arg0 context.Context, arg1 *
 func (mr *MockHistoryServiceServerMockRecorder) MergeDLQMessages(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MergeDLQMessages", reflect.TypeOf((*MockHistoryServiceServer)(nil).MergeDLQMessages), arg0, arg1)
+}
+
+// ModifyWorkflowExecutionProperties mocks base method.
+func (m *MockHistoryServiceServer) ModifyWorkflowExecutionProperties(arg0 context.Context, arg1 *historyservice.ModifyWorkflowExecutionPropertiesRequest) (*historyservice.ModifyWorkflowExecutionPropertiesResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ModifyWorkflowExecutionProperties", arg0, arg1)
+	ret0, _ := ret[0].(*historyservice.ModifyWorkflowExecutionPropertiesResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ModifyWorkflowExecutionProperties indicates an expected call of ModifyWorkflowExecutionProperties.
+func (mr *MockHistoryServiceServerMockRecorder) ModifyWorkflowExecutionProperties(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ModifyWorkflowExecutionProperties", reflect.TypeOf((*MockHistoryServiceServer)(nil).ModifyWorkflowExecutionProperties), arg0, arg1)
 }
 
 // PollMutableState mocks base method.

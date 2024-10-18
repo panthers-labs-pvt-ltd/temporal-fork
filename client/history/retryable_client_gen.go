@@ -500,6 +500,21 @@ func (c *retryableClient) MergeDLQMessages(
 	return resp, err
 }
 
+func (c *retryableClient) ModifyWorkflowExecutionProperties(
+	ctx context.Context,
+	request *historyservice.ModifyWorkflowExecutionPropertiesRequest,
+	opts ...grpc.CallOption,
+) (*historyservice.ModifyWorkflowExecutionPropertiesResponse, error) {
+	var resp *historyservice.ModifyWorkflowExecutionPropertiesResponse
+	op := func(ctx context.Context) error {
+		var err error
+		resp, err = c.client.ModifyWorkflowExecutionProperties(ctx, request, opts...)
+		return err
+	}
+	err := backoff.ThrottleRetryContext(ctx, op, c.policy, c.isRetryable)
+	return resp, err
+}
+
 func (c *retryableClient) PollMutableState(
 	ctx context.Context,
 	request *historyservice.PollMutableStateRequest,

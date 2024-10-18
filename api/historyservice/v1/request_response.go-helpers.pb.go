@@ -1620,6 +1620,80 @@ func (this *ResetWorkflowExecutionResponse) Equal(that interface{}) bool {
 	return proto.Equal(this, that1)
 }
 
+// Marshal an object of type ModifyWorkflowExecutionPropertiesRequest to the protobuf v3 wire format
+func (val *ModifyWorkflowExecutionPropertiesRequest) Marshal() ([]byte, error) {
+	return proto.Marshal(val)
+}
+
+// Unmarshal an object of type ModifyWorkflowExecutionPropertiesRequest from the protobuf v3 wire format
+func (val *ModifyWorkflowExecutionPropertiesRequest) Unmarshal(buf []byte) error {
+	return proto.Unmarshal(buf, val)
+}
+
+// Size returns the size of the object, in bytes, once serialized
+func (val *ModifyWorkflowExecutionPropertiesRequest) Size() int {
+	return proto.Size(val)
+}
+
+// Equal returns whether two ModifyWorkflowExecutionPropertiesRequest values are equivalent by recursively
+// comparing the message's fields.
+// For more information see the documentation for
+// https://pkg.go.dev/google.golang.org/protobuf/proto#Equal
+func (this *ModifyWorkflowExecutionPropertiesRequest) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	var that1 *ModifyWorkflowExecutionPropertiesRequest
+	switch t := that.(type) {
+	case *ModifyWorkflowExecutionPropertiesRequest:
+		that1 = t
+	case ModifyWorkflowExecutionPropertiesRequest:
+		that1 = &t
+	default:
+		return false
+	}
+
+	return proto.Equal(this, that1)
+}
+
+// Marshal an object of type ModifyWorkflowExecutionPropertiesResponse to the protobuf v3 wire format
+func (val *ModifyWorkflowExecutionPropertiesResponse) Marshal() ([]byte, error) {
+	return proto.Marshal(val)
+}
+
+// Unmarshal an object of type ModifyWorkflowExecutionPropertiesResponse from the protobuf v3 wire format
+func (val *ModifyWorkflowExecutionPropertiesResponse) Unmarshal(buf []byte) error {
+	return proto.Unmarshal(buf, val)
+}
+
+// Size returns the size of the object, in bytes, once serialized
+func (val *ModifyWorkflowExecutionPropertiesResponse) Size() int {
+	return proto.Size(val)
+}
+
+// Equal returns whether two ModifyWorkflowExecutionPropertiesResponse values are equivalent by recursively
+// comparing the message's fields.
+// For more information see the documentation for
+// https://pkg.go.dev/google.golang.org/protobuf/proto#Equal
+func (this *ModifyWorkflowExecutionPropertiesResponse) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	var that1 *ModifyWorkflowExecutionPropertiesResponse
+	switch t := that.(type) {
+	case *ModifyWorkflowExecutionPropertiesResponse:
+		that1 = t
+	case ModifyWorkflowExecutionPropertiesResponse:
+		that1 = &t
+	default:
+		return false
+	}
+
+	return proto.Equal(this, that1)
+}
+
 // Marshal an object of type RequestCancelWorkflowExecutionRequest to the protobuf v3 wire format
 func (val *RequestCancelWorkflowExecutionRequest) Marshal() ([]byte, error) {
 	return proto.Marshal(val)
