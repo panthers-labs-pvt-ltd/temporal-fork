@@ -64,5 +64,14 @@ func Invoke(
 		// todo carly: change versioning behavior in visibility
 		// todo carly: move queued tasks to correct queue
 	}
+	/*
+
+		0. Do some verifications
+		1. Add the event to the history
+		2. Apply the event, which does the side effects
+			- update MS (we will make this automatically update visibility)
+			- create wf tasks? i.e. if there is a pending wf task / transient wf task, possibly need to recreate and reschedule it, invalidate old one
+	*/
+
 	return nil, nil
 }
