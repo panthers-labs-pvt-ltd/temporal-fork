@@ -265,11 +265,7 @@ func (s *Versioning3Suite) TestUnpinnedQuery_NoSticky() {
 }
 
 func (s *Versioning3Suite) TestUnpinnedQuery_Sticky() {
-	s.RunTestWithMatchingBehavior(
-		func() {
-			s.testUnpinnedQuery(true)
-		},
-	)
+	s.testUnpinnedQuery(true)
 }
 
 func (s *Versioning3Suite) testUnpinnedQuery(sticky bool) {
