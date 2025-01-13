@@ -63,8 +63,9 @@ message Task {
     int64 scheduled_event_id = 4;
     int32 attempt = 5;
     string activity_id = 6;
-    string workflow_type = 7;
-    string activity_type = 8;
+    string workflow_type = 7; // slg: populated always
+    string activity_type = 8; // slg: only populated if this is about activity task
+    // slg: comes from shard. probably consistency checks? stale shard detection? replication?
     temporal.server.api.clock.v1.VectorClock clock = 9;
     int64 started_event_id = 10;
     int64 version = 11;

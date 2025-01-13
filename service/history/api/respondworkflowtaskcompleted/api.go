@@ -142,7 +142,7 @@ func (handler *WorkflowTaskCompletedHandler) Invoke(
 
 	workflowLease, err := handler.workflowConsistencyChecker.GetWorkflowLeaseWithConsistencyCheck(
 		ctx,
-		token.Clock,
+		token.Clock, // slg: consistency check via shard id, stale shard detection
 		func(mutableState workflow.MutableState) bool {
 			workflowTask := mutableState.GetWorkflowTaskByID(token.GetScheduledEventId())
 			if workflowTask == nil && token.GetScheduledEventId() >= mutableState.GetNextEventID() {
@@ -381,6 +381,7 @@ func (handler *WorkflowTaskCompletedHandler) Invoke(
 			handler.throttledLogger,
 		)
 
+		// slg: handler is created here and then called
 		workflowTaskHandler := newWorkflowTaskCompletedHandler(
 			request.GetIdentity(),
 			completedEvent.GetEventId(), // If completedEvent is nil, then GetEventId() returns 0 and this value shouldn't be used in workflowTaskHandler.
