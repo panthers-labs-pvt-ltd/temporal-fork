@@ -765,6 +765,11 @@ This config is EXPERIMENTAL and may be changed or removed in a later release.`,
 		0.5,
 		`HistoryHostErrorPercentage is the percentage of hosts that are unhealthy`,
 	)
+	SendRawWorkflowHistoryInternally = NewGlobalBoolSetting(
+		"history.sendRawWorkflowHistoryInternally",
+		true,
+		`SendRawWorkflowHistoryInternally is whether to use raw history between temporal services`,
+	)
 	SendRawWorkflowHistory = NewNamespaceBoolSetting(
 		"frontend.sendRawWorkflowHistory",
 		false,

@@ -65,3 +65,12 @@ message TaskRange {
     TaskKey inclusive_min_task_key = 1;
     TaskKey exclusive_max_task_key = 2;
 }
+
+message TruncatedHistoryEvent {
+    int64 event_id = 1;
+    bytes version = 4;
+}
+
+message TruncatedHistoryEvents {
+    repeated TruncatedHistoryEvent history_events = 1;
+}

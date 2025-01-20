@@ -928,55 +928,9 @@ func (m *executionManagerImpl) readHistoryBranch(
 		return nil, nil, nil, nil, 0, err
 	}
 
-	historyEvents := make([]*historypb.HistoryEvent, 0, request.PageSize)
-	historyEventBatches := make([]*historypb.History, 0, request.PageSize)
-
-	var firstEvent, lastEvent *historypb.HistoryEvent
-	var eventCount int
-
-	dataLossTags := func(cause string) []tag.Tag {
-		return []tag.Tag{
-			tag.Cause(cause),
-			tag.WorkflowBranchToken(request.BranchToken),
-			tag.WorkflowFirstEventID(firstEvent.GetEventId()),
-			tag.FirstEventVersion(firstEvent.GetVersion()),
-			tag.WorkflowNextEventID(lastEvent.GetEventId()),
-			tag.LastEventVersion(lastEvent.GetVersion()),
-			tag.Counter(eventCount),
-			tag.TokenLastEventID(token.LastEventID),
-		}
-	}
-
-	for _, batch := range dataBlobs {
-		events, err := m.serializer.DeserializeEvents(batch)
-		if err != nil {
-			return nil, nil, nil, nil, dataSize, err
-		}
-		if len(events) == 0 {
-			m.logger.Error(dataLossMsg, dataLossTags(errEmptyEvents)...)
-			return nil, nil, nil, nil, dataSize, serviceerror.NewDataLoss(errEmptyEvents)
-		}
-
-		firstEvent = events[0]
-		eventCount = len(events)
-		lastEvent = events[eventCount-1]
-
-		if firstEvent.GetVersion() != lastEvent.GetVersion() || firstEvent.GetEventId()+int64(eventCount-1) != lastEvent.GetEventId() {
-			// in a single batch, version should be the same, and ID should be contiguous
-			m.logger.Error(dataLossMsg, dataLossTags(errWrongVersion)...)
-			return historyEvents, historyEventBatches, transactionIDs, nil, dataSize, serviceerror.NewDataLoss(errWrongVersion)
-		}
-		if firstEvent.GetEventId() != token.LastEventID+1 {
-			m.logger.Error(dataLossMsg, dataLossTags(errNonContiguousEventID)...)
-			return historyEvents, historyEventBatches, transactionIDs, nil, dataSize, serviceerror.NewDataLoss(errNonContiguousEventID)
-		}
-
-		if byBatch {
-			historyEventBatches = append(historyEventBatches, &historypb.History{Events: events})
-		} else {
-			historyEvents = append(historyEvents, events...)
-		}
-		token.LastEventID = lastEvent.GetEventId()
+	historyEvents, historyEventBatches, err := DeserializeAndValidateNodes(dataBlobs, request.PageSize, request.BranchToken, token, byBatch, m.serializer, m.logger)
+	if err != nil {
+		return nil, nil, nil, nil, 0, err
 	}
 
 	nextPageToken, err := m.serializeToken(token, false)

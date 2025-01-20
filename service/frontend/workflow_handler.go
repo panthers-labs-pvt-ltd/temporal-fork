@@ -88,6 +88,7 @@ import (
 	"go.temporal.io/server/common/utf8validator"
 	"go.temporal.io/server/common/util"
 	"go.temporal.io/server/common/worker_versioning"
+	"go.temporal.io/server/service/history/api"
 	"go.temporal.io/server/service/worker/batcher"
 	"go.temporal.io/server/service/worker/deployment"
 	"go.temporal.io/server/service/worker/scheduler"
@@ -751,7 +752,63 @@ func (wh *WorkflowHandler) GetWorkflowExecutionHistory(ctx context.Context, requ
 	if err != nil {
 		return nil, err
 	}
+	if wh.config.SendRawWorkflowHistoryInternally() && !wh.config.SendRawWorkflowHistory(request.Namespace) {
+		token, err := api.DeserializeHistoryToken(request.NextPageToken)
+		//history, _, err := persistence.DeserializeAndValidateNodes(response.Response.RawHistory, request.MaximumPageSize, nil, token.PersistenceToken, false, serialization.NewSerializer(), wh.logger)
+		if err != nil {
+			return nil, err
+		}
+
+		response.Response.History, err = wh.validateAndSerializeHistoryBranch(response.Response.RawHistory)
+		if request.HistoryEventFilterType == enumspb.HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT {
+			// only return the last event
+			if len(response.Response.History.Events) > 0 {
+				response.Response.History.Events = response.Response.History.Events[len(response.Response.History.Events)-1:]
+			}
+		}
+		response.Response.RawHistory = nil
+	}
 	return response.Response, nil
+}
+
+func (wh *WorkflowHandler) validateAndSerializeHistoryBranch(blobs []*commonpb.DataBlob) (*historypb.History, error) {
+	serializer := serialization.NewSerializer()
+	dataLossMsg := "Potential data loss"
+	//errNonContiguousEventID := "corrupted history event batch, eventID is not contiguous"
+	errWrongVersion := "corrupted history event batch, wrong version and IDs"
+	errEmptyEvents := "corrupted history event batch, empty events"
+	// TODO: Init with size
+	historyEvents := make([]*historypb.HistoryEvent, 0)
+	for _, batch := range blobs {
+		events, err := serializer.DeserializeEvents(batch)
+		if err != nil {
+			return nil, err
+		}
+		if len(events) == 0 {
+			wh.logger.Error(dataLossMsg, tag.Cause(errEmptyEvents))
+			return nil, serviceerror.NewDataLoss(errEmptyEvents)
+		}
+
+		firstEvent := events[0]
+		eventCount := len(events)
+		lastEvent := events[eventCount-1]
+
+		if firstEvent.GetVersion() != lastEvent.GetVersion() || firstEvent.GetEventId()+int64(eventCount-1) != lastEvent.GetEventId() {
+			// in a single batch, version should be the same, and ID should be contiguous
+			wh.logger.Error(dataLossMsg, tag.Cause(errWrongVersion))
+			return nil, serviceerror.NewDataLoss(errWrongVersion)
+		}
+		//if firstEvent.GetEventId() != token.LastEventID+1 {
+		//	wh.logger.Error(dataLossMsg, tag.Cause(errNonContiguousEventID))
+		//	return nil, serviceerror.NewDataLoss(errNonContiguousEventID)
+		//}
+
+		historyEvents = append(historyEvents, events...)
+	}
+	history := &historypb.History{
+		Events: historyEvents,
+	}
+	return history, nil
 }
 
 // GetWorkflowExecutionHistory returns the history of specified workflow execution.  It fails with 'EntityNotExistError' if specified workflow

@@ -28,8 +28,13 @@ import (
 	"context"
 	"sort"
 
+	commonpb "go.temporal.io/api/common/v1"
 	historypb "go.temporal.io/api/history/v1"
+	"go.temporal.io/api/serviceerror"
 	persistencespb "go.temporal.io/server/api/persistence/v1"
+	"go.temporal.io/server/common/log"
+	"go.temporal.io/server/common/log/tag"
+	"go.temporal.io/server/common/persistence/serialization"
 )
 
 // ReadFullPageEvents reads a full page of history events from ExecutionManager. Due to storage format of V2 History
@@ -127,4 +132,81 @@ func sortAncestors(ans []*persistencespb.HistoryBranchRange) {
 			(ans)[i].BeginNodeId = (ans)[i-1].GetEndNodeId()
 		}
 	}
+}
+
+//// DeserializeAndValidateNodes deserializes and validates history nodes
+//func DeserializeAndValidateNodes(
+//	request *ReadHistoryBranchRequest,
+//	dataBlobs []*commonpb.DataBlob,
+//	token []byte,
+//	byBatch bool,
+//	serializer serialization.Serializer,
+//	logger log.Logger,
+//) ([]*historypb.HistoryEvent, []*historypb.History, error) {
+//	token := serializer.Dese
+//	return deserializeAndValidateNodes(request, dataBlobs, token, byBatch, serializer, logger)
+//}
+
+// DeserializeAndValidateNodes deserializes and validates history nodes
+func DeserializeAndValidateNodes(
+	dataBlobs []*commonpb.DataBlob,
+	pageSize int,
+	branchToken []byte,
+	token *historyPagingToken,
+	byBatch bool,
+	serializer serialization.Serializer,
+	logger log.Logger,
+) ([]*historypb.HistoryEvent, []*historypb.History, error) {
+
+	historyEvents := make([]*historypb.HistoryEvent, 0, pageSize)
+	historyEventBatches := make([]*historypb.History, 0, pageSize)
+
+	var firstEvent, lastEvent *historypb.HistoryEvent
+	var eventCount int
+
+	dataLossTags := func(cause string) []tag.Tag {
+		return []tag.Tag{
+			tag.Cause(cause),
+			tag.WorkflowBranchToken(branchToken),
+			tag.WorkflowFirstEventID(firstEvent.GetEventId()),
+			tag.FirstEventVersion(firstEvent.GetVersion()),
+			tag.WorkflowNextEventID(lastEvent.GetEventId()),
+			tag.LastEventVersion(lastEvent.GetVersion()),
+			tag.Counter(eventCount),
+			tag.TokenLastEventID(token.LastEventID),
+		}
+	}
+
+	for _, batch := range dataBlobs {
+		events, err := serializer.DeserializeEvents(batch)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(events) == 0 {
+			logger.Error(dataLossMsg, dataLossTags(errEmptyEvents)...)
+			return nil, nil, serviceerror.NewDataLoss(errEmptyEvents)
+		}
+
+		firstEvent = events[0]
+		eventCount = len(events)
+		lastEvent = events[eventCount-1]
+
+		if firstEvent.GetVersion() != lastEvent.GetVersion() || firstEvent.GetEventId()+int64(eventCount-1) != lastEvent.GetEventId() {
+			// in a single batch, version should be the same, and ID should be contiguous
+			logger.Error(dataLossMsg, dataLossTags(errWrongVersion)...)
+			return historyEvents, historyEventBatches, serviceerror.NewDataLoss(errWrongVersion)
+		}
+		if firstEvent.GetEventId() != token.LastEventID+1 {
+			logger.Error(dataLossMsg, dataLossTags(errNonContiguousEventID)...)
+			return historyEvents, historyEventBatches, serviceerror.NewDataLoss(errNonContiguousEventID)
+		}
+
+		if byBatch {
+			historyEventBatches = append(historyEventBatches, &historypb.History{Events: events})
+		} else {
+			historyEvents = append(historyEvents, events...)
+		}
+		token.LastEventID = lastEvent.GetEventId()
+	}
+	return historyEvents, historyEventBatches, nil
 }

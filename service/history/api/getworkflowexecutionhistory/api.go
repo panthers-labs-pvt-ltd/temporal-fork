@@ -191,7 +191,7 @@ func Invoke(
 	var historyBlob []*commonpb.DataBlob
 	if isCloseEventOnly {
 		if !isWorkflowRunning {
-			if shardContext.GetConfig().SendRawWorkflowHistory(request.Request.GetNamespace()) {
+			if shardContext.GetConfig().SendRawWorkflowHistoryInternally() {
 				historyBlob, _, err = api.GetRawHistory(
 					ctx,
 					shardContext,
@@ -246,7 +246,7 @@ func Invoke(
 				continuationToken = nil
 			}
 		} else {
-			if shardContext.GetConfig().SendRawWorkflowHistory(request.Request.GetNamespace()) {
+			if shardContext.GetConfig().SendRawWorkflowHistoryInternally() {
 				historyBlob, continuationToken.PersistenceToken, err = api.GetRawHistory(
 					ctx,
 					shardContext,

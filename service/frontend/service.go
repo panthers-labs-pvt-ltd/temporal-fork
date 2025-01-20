@@ -132,8 +132,8 @@ type Config struct {
 	// VisibilityArchival system protection
 	VisibilityArchivalQueryMaxPageSize dynamicconfig.IntPropertyFn
 
-	// DEPRECATED
-	SendRawWorkflowHistory dynamicconfig.BoolPropertyFnWithNamespaceFilter
+	SendRawWorkflowHistoryInternally dynamicconfig.BoolPropertyFn
+	SendRawWorkflowHistory           dynamicconfig.BoolPropertyFnWithNamespaceFilter
 
 	// DefaultWorkflowTaskTimeout the default workflow task timeout
 	DefaultWorkflowTaskTimeout dynamicconfig.DurationPropertyFnWithNamespaceFilter
@@ -296,6 +296,7 @@ func NewConfig(
 		SearchAttributesTotalSizeLimit:           dynamicconfig.SearchAttributesTotalSizeLimit.Get(dc),
 		VisibilityArchivalQueryMaxPageSize:       dynamicconfig.VisibilityArchivalQueryMaxPageSize.Get(dc),
 		DisallowQuery:                            dynamicconfig.DisallowQuery.Get(dc),
+		SendRawWorkflowHistoryInternally:         dynamicconfig.SendRawWorkflowHistoryInternally.Get(dc),
 		SendRawWorkflowHistory:                   dynamicconfig.SendRawWorkflowHistory.Get(dc),
 		DefaultWorkflowRetryPolicy:               dynamicconfig.DefaultWorkflowRetryPolicy.Get(dc),
 		DefaultWorkflowTaskTimeout:               dynamicconfig.DefaultWorkflowTaskTimeout.Get(dc),
