@@ -679,7 +679,40 @@ func (m *executionManagerImpl) readRawHistoryBranch(
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Validate events by deserializing eventID and version.
+	allEvents := make([]StrippedHistoryEvent, 0, pageSize)
+	for _, node := range resp.Nodes {
+		events, err := m.serializer.DeserializeStrippedEvents(node.Events)
+		if err != nil {
+			return nil, nil, err
+		}
+		strippedBatch := make([]StrippedHistoryEvent, 0, pageSize)
+		for _, event := range events {
+			strippedBatch = append(strippedBatch, event)
+			allEvents = append(allEvents, event)
+		}
+		err = ValidateBatch(strippedBatch, branchToken, token, m.logger)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if err := VerifyHistoryIsComplete(
+		allEvents,
+		minNodeID,
+		maxNodeID-1,
+		len(token.StoreToken) == 0,
+		len(resp.NextPageToken) == 0,
+		pageSize); err != nil {
+		//metrics.ServiceErrIncompleteHistoryCounter.With(metricsHandler).Record(1)
+		m.logger.Error("getHistory: incomplete history",
+			tag.WorkflowBranchToken(branchToken),
+			tag.Error(err))
+	}
+	// TODO remove line?
 	token.StoreToken = resp.NextPageToken
+
 	return resp.Nodes, token, nil
 }
 
@@ -825,6 +858,36 @@ func (m *executionManagerImpl) readRawHistoryBranchAndFilter(
 		token.LastTransactionID = lastNode.TransactionID
 	}
 
+	//strippedBatches := make([][]StrippedHistoryEvent, 0, request.PageSize)
+	//fullEvents := make([]StrippedHistoryEvent, 0, request.PageSize)
+	//for _, node := range nodes {
+	//	events, err := m.serializer.DeserializeStrippedEvents(node.Events)
+	//	if err != nil {
+	//		return nil, nil, nil, nil, 0, err
+	//	}
+	//	strippedBatch := make([]StrippedHistoryEvent, 0, request.PageSize)
+	//	for _, event := range events {
+	//		strippedBatch = append(strippedBatch, event)
+	//		fullEvents = append(fullEvents, event)
+	//	}
+	//	//strippedBatches = append(strippedBatches, strippedBatch)
+	//	err = ValidateBatch(strippedBatch, branchToken, token, m.logger)
+	//	if err != nil {
+	//		return nil, nil, nil, nil, 0, err
+	//	}
+	//}
+	//if err := VerifyHistoryIsComplete(
+	//	fullEvents,
+	//	minNodeID,
+	//	maxNodeID,
+	//	minNodeID == 1,
+	//	token.LastEventID == common.LastEventID,
+	//	request.PageSize); err != nil {
+	//	//metrics.ServiceErrIncompleteHistoryCounter.With(metricsHandler).Record(1)
+	//	m.logger.Error("getHistory: incomplete history",
+	//		tag.WorkflowBranchToken(request.BranchToken),
+	//		tag.Error(err))
+	//}
 	return dataBlobs, transactionIDs, nodeIDs, token, dataSize, nil
 }
 
@@ -923,14 +986,40 @@ func (m *executionManagerImpl) readHistoryBranch(
 	request *ReadHistoryBranchRequest,
 ) ([]*historypb.HistoryEvent, []*historypb.History, []int64, []byte, int, error) {
 
+	//dataBlobs, transactionIDs, _, token, dataSize, err := m.readRawHistoryBranchAndFilter(ctx, request)
+	//if err != nil {
+	//	return nil, nil, nil, nil, 0, err
+	//}
+	//
+	//historyEvents, historyEventBatches, err := DeserializeAndValidateNodes(dataBlobs, request.PageSize, request.BranchToken, token, byBatch, m.serializer, m.logger)
+	//if err != nil {
+	//	return nil, nil, nil, nil, 0, err
+	//}
+	//
+	//nextPageToken, err := m.serializeToken(token, false)
+	//if err != nil {
+	//	return nil, nil, nil, nil, 0, err
+	//}
+	//return historyEvents, historyEventBatches, transactionIDs, nextPageToken, dataSize, nil
 	dataBlobs, transactionIDs, _, token, dataSize, err := m.readRawHistoryBranchAndFilter(ctx, request)
 	if err != nil {
 		return nil, nil, nil, nil, 0, err
 	}
 
-	historyEvents, historyEventBatches, err := DeserializeAndValidateNodes(dataBlobs, request.PageSize, request.BranchToken, token, byBatch, m.serializer, m.logger)
-	if err != nil {
-		return nil, nil, nil, nil, 0, err
+	historyEvents := make([]*historypb.HistoryEvent, 0, request.PageSize)
+	historyEventBatches := make([]*historypb.History, 0, request.PageSize)
+
+	for _, batch := range dataBlobs {
+		events, err := m.serializer.DeserializeEvents(batch)
+		if err != nil {
+			return nil, nil, nil, nil, dataSize, err
+		}
+
+		if byBatch {
+			historyEventBatches = append(historyEventBatches, &historypb.History{Events: events})
+		} else {
+			historyEvents = append(historyEvents, events...)
+		}
 	}
 
 	nextPageToken, err := m.serializeToken(token, false)

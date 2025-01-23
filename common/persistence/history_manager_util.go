@@ -26,15 +26,25 @@ package persistence
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
-	commonpb "go.temporal.io/api/common/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/api/serviceerror"
 	persistencespb "go.temporal.io/server/api/persistence/v1"
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/tag"
-	"go.temporal.io/server/common/persistence/serialization"
+)
+
+type (
+	StrippedHistory interface {
+		GetEvents() []StrippedHistoryEvent
+	}
+
+	StrippedHistoryEvent interface {
+		GetEventId() int64
+		GetVersion() int64
+	}
 )
 
 // ReadFullPageEvents reads a full page of history events from ExecutionManager. Due to storage format of V2 History
@@ -147,23 +157,51 @@ func sortAncestors(ans []*persistencespb.HistoryBranchRange) {
 //	return deserializeAndValidateNodes(request, dataBlobs, token, byBatch, serializer, logger)
 //}
 
-// DeserializeAndValidateNodes deserializes and validates history nodes
-func DeserializeAndValidateNodes(
-	dataBlobs []*commonpb.DataBlob,
-	pageSize int,
+//// DeserializeAndValidateNodes deserializes and validates history nodes
+//func DeserializeAndValidateNodes(
+//	dataBlobs []*commonpb.DataBlob,
+//	pageSize int,
+//	branchToken []byte,
+//	token *historyPagingToken,
+//	byBatch bool,
+//	serializer serialization.Serializer,
+//	logger log.Logger,
+//) ([]*historypb.HistoryEvent, []*historypb.History, error) {
+//
+//	historyEvents := make([]*historypb.HistoryEvent, 0, pageSize)
+//	historyEventBatches := make([]*historypb.History, 0, pageSize)
+//
+//	for _, batch := range dataBlobs {
+//		events, err := serializer.DeserializeEvents(batch)
+//		if err != nil {
+//			return nil, nil, err
+//		}
+//		strippedBatch := make([]StrippedHistoryEvent, 0, pageSize)
+//		for _, event := range events {
+//			strippedBatch = append(strippedBatch, event)
+//		}
+//		if err := ValidateBatch(strippedBatch, branchToken, token, logger); err != nil {
+//			return nil, nil, err
+//		}
+//		historyEventBatches = append(historyEventBatches, &historypb.History{Events: events})
+//	}
+//
+//	if !byBatch {
+//		for _, batch := range historyEventBatches {
+//			historyEvents = append(historyEvents, batch.Events...)
+//		}
+//	}
+//	return historyEvents, historyEventBatches, nil
+//}
+
+func ValidateBatch(
+	batch []StrippedHistoryEvent,
 	branchToken []byte,
 	token *historyPagingToken,
-	byBatch bool,
-	serializer serialization.Serializer,
 	logger log.Logger,
-) ([]*historypb.HistoryEvent, []*historypb.History, error) {
-
-	historyEvents := make([]*historypb.HistoryEvent, 0, pageSize)
-	historyEventBatches := make([]*historypb.History, 0, pageSize)
-
-	var firstEvent, lastEvent *historypb.HistoryEvent
+) error {
+	var firstEvent, lastEvent StrippedHistoryEvent
 	var eventCount int
-
 	dataLossTags := func(cause string) []tag.Tag {
 		return []tag.Tag{
 			tag.Cause(cause),
@@ -176,37 +214,75 @@ func DeserializeAndValidateNodes(
 			tag.TokenLastEventID(token.LastEventID),
 		}
 	}
+	firstEvent = batch[0]
+	eventCount = len(batch)
+	lastEvent = batch[eventCount-1]
 
-	for _, batch := range dataBlobs {
-		events, err := serializer.DeserializeEvents(batch)
-		if err != nil {
-			return nil, nil, err
-		}
-		if len(events) == 0 {
-			logger.Error(dataLossMsg, dataLossTags(errEmptyEvents)...)
-			return nil, nil, serviceerror.NewDataLoss(errEmptyEvents)
-		}
-
-		firstEvent = events[0]
-		eventCount = len(events)
-		lastEvent = events[eventCount-1]
-
-		if firstEvent.GetVersion() != lastEvent.GetVersion() || firstEvent.GetEventId()+int64(eventCount-1) != lastEvent.GetEventId() {
-			// in a single batch, version should be the same, and ID should be contiguous
-			logger.Error(dataLossMsg, dataLossTags(errWrongVersion)...)
-			return historyEvents, historyEventBatches, serviceerror.NewDataLoss(errWrongVersion)
-		}
-		if firstEvent.GetEventId() != token.LastEventID+1 {
-			logger.Error(dataLossMsg, dataLossTags(errNonContiguousEventID)...)
-			return historyEvents, historyEventBatches, serviceerror.NewDataLoss(errNonContiguousEventID)
-		}
-
-		if byBatch {
-			historyEventBatches = append(historyEventBatches, &historypb.History{Events: events})
-		} else {
-			historyEvents = append(historyEvents, events...)
-		}
-		token.LastEventID = lastEvent.GetEventId()
+	if firstEvent.GetVersion() != lastEvent.GetVersion() || firstEvent.GetEventId()+int64(eventCount-1) != lastEvent.GetEventId() {
+		// in a single batch, version should be the same, and ID should be contiguous
+		logger.Error(dataLossMsg, dataLossTags(errWrongVersion)...)
+		return serviceerror.NewDataLoss(errWrongVersion)
 	}
-	return historyEvents, historyEventBatches, nil
+	if firstEvent.GetEventId() != token.LastEventID+1 {
+		logger.Error(dataLossMsg, dataLossTags(errNonContiguousEventID)...)
+		return serviceerror.NewDataLoss(errNonContiguousEventID)
+	}
+	token.LastEventID = lastEvent.GetEventId()
+	return nil
+}
+
+func VerifyHistoryIsComplete(
+	events []StrippedHistoryEvent,
+	expectedFirstEventID int64,
+	expectedLastEventID int64,
+	isFirstPage bool,
+	isLastPage bool,
+	pageSize int,
+) error {
+
+	nEvents := len(events)
+	if nEvents == 0 {
+		if isLastPage {
+			// we seem to be returning a non-nil pageToken on the lastPage which
+			// in turn cases the client to call getHistory again - only to find
+			// there are no more events to consume - bail out if this is the case here
+			return nil
+		}
+		return serviceerror.NewDataLoss("History contains zero events.")
+	}
+
+	firstEventID := events[0].GetEventId()
+	lastEventID := events[nEvents-1].GetEventId()
+
+	if !isFirstPage { // at least one page of history has been read previously
+		if firstEventID <= expectedFirstEventID {
+			// not first page and no events have been read in the previous pages - not possible
+			return serviceerror.NewDataLoss(fmt.Sprintf("Invalid history: expected first eventID to be > %v but got %v", expectedFirstEventID, firstEventID))
+		}
+		expectedFirstEventID = firstEventID
+	}
+
+	if !isLastPage {
+		// estimate lastEventID based on pageSize. This is a lower bound
+		// since the persistence layer counts "batch of events" as a single page
+		expectedLastEventID = expectedFirstEventID + int64(pageSize) - 1
+	}
+
+	nExpectedEvents := expectedLastEventID - expectedFirstEventID + 1
+
+	if firstEventID == expectedFirstEventID &&
+		((isLastPage && lastEventID == expectedLastEventID && int64(nEvents) == nExpectedEvents) ||
+			(!isLastPage && lastEventID >= expectedLastEventID && int64(nEvents) >= nExpectedEvents)) {
+		return nil
+	}
+
+	return serviceerror.NewDataLoss(fmt.Sprintf("Incomplete history: expected events [%v-%v] but got events [%v-%v] of length %v: isFirstPage=%v,isLastPage=%v,pageSize=%v",
+		expectedFirstEventID,
+		expectedLastEventID,
+		firstEventID,
+		lastEventID,
+		nEvents,
+		isFirstPage,
+		isLastPage,
+		pageSize))
 }

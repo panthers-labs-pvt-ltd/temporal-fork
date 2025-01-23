@@ -767,7 +767,7 @@ This config is EXPERIMENTAL and may be changed or removed in a later release.`,
 	)
 	SendRawWorkflowHistoryInternally = NewGlobalBoolSetting(
 		"history.sendRawWorkflowHistoryInternally",
-		true,
+		false,
 		`SendRawWorkflowHistoryInternally is whether to use raw history between temporal services`,
 	)
 	SendRawWorkflowHistory = NewNamespaceBoolSetting(

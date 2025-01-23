@@ -173,6 +173,7 @@ func (s *engineSuite) SetupTest() {
 	s.mockOutboundProcessor.EXPECT().NotifyNewTasks(gomock.Any()).AnyTimes()
 
 	s.config = tests.NewDynamicConfig()
+	s.config.SendRawWorkflowHistoryInternally = dynamicconfig.GetBoolPropertyFn(false)
 	s.mockShard = shard.NewTestContext(
 		s.controller,
 		&persistencespb.ShardInfo{

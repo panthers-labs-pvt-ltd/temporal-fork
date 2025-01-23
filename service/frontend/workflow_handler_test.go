@@ -72,7 +72,6 @@ import (
 	"go.temporal.io/server/common/resourcetest"
 	"go.temporal.io/server/common/rpc/interceptor"
 	"go.temporal.io/server/common/searchattribute"
-	e "go.temporal.io/server/service/history/events"
 	"go.temporal.io/server/service/worker/batcher"
 	"go.temporal.io/server/service/worker/scheduler"
 	"go.uber.org/mock/gomock"
@@ -2049,7 +2048,11 @@ func (s *WorkflowHandlerSuite) TestVerifyHistoryIsComplete() {
 	}
 
 	for i, tc := range testCases {
-		err := e.VerifyHistoryIsComplete(tc.events, tc.firstEventID, tc.lastEventID, tc.isFirstPage, tc.isLastPage, tc.pageSize)
+		strippedEvents := make([]persistence.StrippedHistoryEvent, len(tc.events))
+		for j, e := range tc.events {
+			strippedEvents[j] = e
+		}
+		err := persistence.VerifyHistoryIsComplete(strippedEvents, tc.firstEventID, tc.lastEventID, tc.isFirstPage, tc.isLastPage, tc.pageSize)
 		if tc.isResultErr {
 			s.Error(err, "testcase %v failed", i)
 		} else {
