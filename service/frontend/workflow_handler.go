@@ -753,28 +753,29 @@ func (wh *WorkflowHandler) GetWorkflowExecutionHistory(ctx context.Context, requ
 		return nil, err
 	}
 
-	if wh.config.SendRawWorkflowHistoryInternally() && !wh.config.SendRawWorkflowHistory(request.Namespace) {
-		ifCloseEventOnly := request.HistoryEventFilterType == enumspb.HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT
-		response.Response.History, err = wh.deSerializeHistory(ctx, request.MaximumPageSize, ifCloseEventOnly, response.Response.RawHistory)
-		response.Response.RawHistory = nil
-	}
+	//if wh.config.SendRawWorkflowHistoryInternally() && !wh.config.SendRawWorkflowHistory(request.Namespace) {
+	//	ifCloseEventOnly := request.HistoryEventFilterType == enumspb.HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT
+	//	response.Response.History, err = wh.deSerializeHistory(ctx, request.MaximumPageSize, ifCloseEventOnly, response.RawResponse.History)
+	//	response.Response.RawHistory = nil
+	//}
 	return response.Response, nil
 }
 
-func (wh *WorkflowHandler) deSerializeHistory(ctx context.Context, pageSize int32, isCloseEventOnly bool, blobs []*commonpb.DataBlob) (*historypb.History, error) {
-	historyEvents := make([]*historypb.HistoryEvent, 0, pageSize)
-	for _, batch := range blobs {
-		events, err := wh.payloadSerializer.DeserializeEvents(batch)
-		if err != nil {
-			return nil, err
-		}
-		historyEvents = append(historyEvents, events...)
+func (wh *WorkflowHandler) deSerializeHistory(ctx context.Context, pageSize int32, isCloseEventOnly bool, blob []byte) (*historypb.History, error) {
+	//historyEvents := make([]*historypb.HistoryEvent, 0, pageSize)
+	dataBlob := commonpb.DataBlob{Data: blob, EncodingType: enumspb.ENCODING_TYPE_PROTO3}
+	//for _, batch := range blobs {
+	historyEvents, err := wh.payloadSerializer.DeserializeEvents(&dataBlob)
+	if err != nil {
+		return nil, err
 	}
+	//historyEvents = append(historyEvents, events...)
+	//}
 	history := &historypb.History{
 		Events: historyEvents,
 	}
 
-	err := api.FixFollowEvents(ctx, wh.versionChecker, isCloseEventOnly, history)
+	err = api.FixFollowEvents(ctx, wh.versionChecker, isCloseEventOnly, history)
 	if err != nil {
 		return nil, err
 	}

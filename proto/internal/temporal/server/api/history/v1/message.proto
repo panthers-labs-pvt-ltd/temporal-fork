@@ -29,6 +29,7 @@ option go_package = "go.temporal.io/server/api/history/v1;history";
 import "google/protobuf/timestamp.proto";
 
 import "temporal/api/history/v1/message.proto";
+import "temporal/api/common/v1/message.proto";
 
 message TransientWorkflowTaskInfo {
     reserved 1;
@@ -73,4 +74,20 @@ message StrippedHistoryEvent {
 
 message StrippedHistoryEvents {
     repeated StrippedHistoryEvent events = 1;
+}
+
+// (-- api-linter: core::0158::response-next-page-token-field=disabled
+//     aip.dev/not-precedent: We need to do this because reasons. --)
+// (-- api-linter: core::0158::response-repeated-first-field=disabled
+//     aip.dev/not-precedent: We need to do this because reasons. --)
+// (-- api-linter: core::0158::response-plural-first-field=disabled
+//     aip.dev/not-precedent: We need to do this because reasons. --)
+message GetWorkflowExecutionHistoryResponse {
+    repeated bytes history = 1;
+    // Raw history is an alternate representation of history that may be returned if configured on
+    // the frontend. This is not supported by all SDKs. Either this or `history` will be set.
+    repeated temporal.api.common.v1.DataBlob raw_history = 2;
+    // Will be set if there are more history events than were included in this response
+    bytes next_page_token = 3;
+    bool archived = 4;
 }
