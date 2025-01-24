@@ -285,6 +285,7 @@ func (handler *workflowTaskCompletedHandler) handleCommand(
 
 	// TODO: ideally history events should not be exposed here. We should be passing the command
 	// all the way down but it requires a bigger refactor of the mutable state interface.
+	// slg: 3 major paths: fail WFT, terminate WF, return error to worker
 	switch command.GetCommandType() {
 	case enumspb.COMMAND_TYPE_SCHEDULE_ACTIVITY_TASK:
 		historyEvent, response, err = handler.handleCommandScheduleActivity(ctx, command.GetScheduleActivityTaskCommandAttributes())
@@ -482,6 +483,7 @@ func (handler *workflowTaskCompletedHandler) handleCommandScheduleActivity(
 	newVersioningUsed := handler.mutableState.GetExecutionInfo().GetAssignedBuildId() != ""
 	versioningUsed := oldVersioningUsed || newVersioningUsed
 
+	// [cleanup-old-wv]
 	// Enable eager activity start if dynamic config enables it and either 1. workflow doesn't use versioning,
 	// or 2. workflow uses versioning and activity intends to use a compatible version (since a
 	// worker is obviously compatible with itself and we are okay dispatching an eager task knowing that there may be a
@@ -513,6 +515,7 @@ func (handler *workflowTaskCompletedHandler) handleCommandScheduleActivity(
 		nil
 }
 
+// slg: could be handled by effect.Buffer
 func (handler *workflowTaskCompletedHandler) handlePostCommandEagerExecuteActivity(
 	_ context.Context,
 	attr *commandpb.ScheduleActivityTaskCommandAttributes,

@@ -202,6 +202,7 @@ func (handler *WorkflowTaskCompletedHandler) Invoke(
 		workflowLease.GetReleaseFn()(errForRelease)
 	}()
 
+	// slg: lots of these fields probably no longer necessary now that we have token.StartedTime (idempotency key)
 	if !ms.IsWorkflowExecutionRunning() ||
 		currentWorkflowTask == nil ||
 		currentWorkflowTask.StartedEventID == common.EmptyEventID ||
@@ -214,6 +215,7 @@ func (handler *WorkflowTaskCompletedHandler) Invoke(
 		return nil, serviceerror.NewNotFound("Workflow task not found.")
 	}
 
+	// slg: could be moved to top
 	behavior := request.GetVersioningBehavior()
 	if behavior != enumspb.VERSIONING_BEHAVIOR_UNSPECIFIED && request.GetDeployment() == nil {
 		// Mutable state wasn't changed yet and doesn't have to be cleared.
@@ -235,6 +237,7 @@ func (handler *WorkflowTaskCompletedHandler) Invoke(
 		}
 	}
 
+	// slg: roll back things if there is an error. currently used for cancelling update notifications
 	var effects effect.Buffer
 	defer func() {
 		// code in this file and workflowTaskHandler is inconsistent in the way
@@ -266,6 +269,7 @@ func (handler *WorkflowTaskCompletedHandler) Invoke(
 		MaxResetPoints:              handler.config.MaxAutoResetPoints(nsName),
 		MaxSearchAttributeValueSize: handler.config.SearchAttributesSizeOfValueLimit(nsName),
 	}
+	// slg: cleanup-wv
 	// TODO: this metric is inaccurate, it should only be emitted if a new binary checksum (or build ID) is added in this completion.
 	if ms.GetExecutionInfo().AutoResetPoints != nil && limits.MaxResetPoints == len(ms.GetExecutionInfo().AutoResetPoints.Points) {
 		metrics.AutoResetPointsLimitExceededCounter.With(handler.metricsHandler).Record(
@@ -282,6 +286,7 @@ func (handler *WorkflowTaskCompletedHandler) Invoke(
 	// WT heartbeat timeout is applicable only when WF doesn't make any progress and does heartbeats only.
 	checkWTHeartbeatTimeout := request.GetForceCreateNewWorkflowTask() && len(request.Commands) == 0 && len(request.Messages) == 0
 
+	// slg: protect against local activity deadlock
 	if checkWTHeartbeatTimeout {
 		// WorkflowTaskHeartbeatTimeout is a total duration for which workflow is allowed to send continuous heartbeats.
 		// Default is 30 minutes.
@@ -326,7 +331,7 @@ func (handler *WorkflowTaskCompletedHandler) Invoke(
 			1,
 			metrics.OperationTag(metrics.HistoryRespondWorkflowTaskCompletedScope))
 		if assignedBuildId == "" || assignedBuildId == wftCompletedBuildId {
-			// TODO: clean up. this is not applicable to V3
+			// TODO (Shahab): clean up. this is not applicable to V3 // cleanup-wv
 			// For versioned workflows, only set sticky queue if the WFT is completed by the WF's current build ID.
 			// It is possible that the WF has been redirected to another build ID since this WFT started, in that case
 			// we should not set sticky queue of the old build ID and keep the normal queue to let Matching send the
@@ -573,7 +578,7 @@ func (handler *WorkflowTaskCompletedHandler) Invoke(
 	}
 
 	var updateErr error
-	if newMutableState != nil {
+	if newMutableState != nil { // slg: CaN
 		newWorkflowExecutionInfo := newMutableState.GetExecutionInfo()
 		newWorkflowExecutionState := newMutableState.GetExecutionState()
 		updateErr = weContext.UpdateWorkflowExecutionWithNewAsActive(
