@@ -445,6 +445,7 @@ func (p *ackMgrImpl) ConvertTask(
 			p.workflowCache,
 		)
 	case *tasks.HistoryReplicationTask:
+		p.logger.Info(fmt.Sprintf("Converting. taskId: %v, firstEventId: %v, nextEventId: %v, version: %v", task.TaskID, task.FirstEventID, task.NextEventID, task.Version), tag.WorkflowRunID(task.GetRunID()))
 		return convertHistoryReplicationTask(
 			ctx,
 			p.shardContext,

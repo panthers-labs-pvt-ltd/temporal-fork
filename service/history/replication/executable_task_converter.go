@@ -30,6 +30,7 @@ import (
 
 	enumsspb "go.temporal.io/server/api/enums/v1"
 	replicationspb "go.temporal.io/server/api/replication/v1"
+	"go.temporal.io/server/common/log/tag"
 	"go.temporal.io/server/common/metrics"
 )
 
@@ -127,6 +128,7 @@ func (e *executableTaskConverterImpl) convertOne(
 			replicationTask,
 		)
 	case enumsspb.REPLICATION_TASK_TYPE_HISTORY_V2_TASK:
+		e.processToolBox.Logger.Info(fmt.Sprintf("Receiving. taskId: %v, firstEventId: %v, nextEventId: %v, version: %v", replicationTask.RawTaskInfo.TaskId, replicationTask.RawTaskInfo.FirstEventId, replicationTask.RawTaskInfo.NextEventId, replicationTask.RawTaskInfo.Version), tag.WorkflowRunID(replicationTask.RawTaskInfo.RunId))
 		return NewExecutableHistoryTask(
 			e.processToolBox,
 			replicationTask.SourceTaskId,
