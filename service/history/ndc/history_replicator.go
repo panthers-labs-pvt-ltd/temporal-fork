@@ -26,6 +26,7 @@ package ndc
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	commonpb "go.temporal.io/api/common/v1"
@@ -487,6 +488,7 @@ func (r *HistoryReplicatorImpl) doApplyEvents(
 			if err != nil {
 				return err
 			} else if !prepareHistoryBranchOut.DoContinue {
+				r.logger.Info(fmt.Sprintf("skipping. StartEvent: %v, endEvent: %v, version: %v", task.getFirstEvent().EventId, task.getLastEvent().EventId, task.getFirstEvent().Version), tag.WorkflowRunID(task.getRunID()))
 				metrics.DuplicateReplicationEventsCounter.With(r.metricsHandler).Record(
 					1,
 					metrics.OperationTag(metrics.ReplicateHistoryEventsScope))

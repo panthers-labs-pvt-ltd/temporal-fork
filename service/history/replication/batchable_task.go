@@ -25,6 +25,7 @@
 package replication
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -96,6 +97,11 @@ func (w *batchedTask) Ack() {
 	metrics.BatchableTaskBatchCount.With(w.metricsHandler).Record(
 		float64(len(w.individualTasks)),
 	)
+	taskIds := make([]int64, len(w.individualTasks))
+	for i, task := range w.individualTasks {
+		taskIds[i] = task.TaskID()
+	}
+	w.logger.Info(fmt.Sprintf("Batched task %v acknowledged", taskIds))
 	w.callIndividual(TrackableExecutableTask.Ack)
 }
 
