@@ -26,6 +26,7 @@ package replication
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -120,6 +121,7 @@ func (e *ExecutableHistoryTask) QueueID() interface{} {
 
 func (e *ExecutableHistoryTask) Execute() error {
 	if e.TerminalState() {
+		e.Logger.Info(fmt.Sprintf("Skipping Terminal. state=%v, taskId=%v, firstEventID=%v, nextEventID=%v", e.State(), e.TaskID(), e.eventsDesResponse.events[0][0].GetEventId(), e.eventsDesResponse.events[len(e.eventsDesResponse.events)-1][len(e.eventsDesResponse.events[len(e.eventsDesResponse.events)-1])-1].GetEventId()+1))
 		return nil
 	}
 	namespaceName, apply, nsError := e.GetNamespaceInfo(headers.SetCallerInfo(

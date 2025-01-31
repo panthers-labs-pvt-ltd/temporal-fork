@@ -56,6 +56,7 @@ type (
 		// individualTaskHandler will be called when batched task was Nack, Reschedule, MarkPoisonPill
 		individualTaskHandler func(task TrackableExecutableTask)
 		logger                log.Logger
+		initCount             int
 		metricsHandler        metrics.Handler
 	}
 
@@ -101,7 +102,10 @@ func (w *batchedTask) Ack() {
 	for i, task := range w.individualTasks {
 		taskIds[i] = task.TaskID()
 	}
-	w.logger.Info(fmt.Sprintf("Batched task %v acknowledged", taskIds))
+	if len(w.individualTasks) != w.initCount {
+		w.logger.Warn(fmt.Sprintf("Ack more tasks %v acknowledged Queue: %v", taskIds, w.QueueID()))
+	}
+	w.logger.Info(fmt.Sprintf("Batched task %v acknowledged Queue: %v", taskIds, w.QueueID()))
 	w.callIndividual(TrackableExecutableTask.Ack)
 }
 
@@ -109,6 +113,12 @@ func (w *batchedTask) Execute() error {
 	w.lock.Lock()
 	w.state = batchStateClose
 	w.lock.Unlock()
+	w.initCount = len(w.individualTasks)
+	taskIds := make([]int64, len(w.individualTasks))
+	for i, task := range w.individualTasks {
+		taskIds[i] = task.TaskID()
+	}
+	w.logger.Info(fmt.Sprintf("Batched task %v exeucting. Queue: %v", taskIds, w.QueueID()))
 	return w.batchedTask.Execute()
 }
 
