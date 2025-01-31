@@ -200,6 +200,7 @@ func (e *ExecutableTaskImpl) Ack() {
 
 	now := time.Now().UTC()
 	e.emitFinishMetrics(now)
+	e.Logger.Info("Acking replication task", tag.TaskID(e.taskID), tag.WorkflowRunID(e.replicationTask.RawTaskInfo.RunId))
 }
 
 func (e *ExecutableTaskImpl) Nack(err error) {
