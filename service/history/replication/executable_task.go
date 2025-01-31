@@ -238,10 +238,10 @@ func (e *ExecutableTaskImpl) Abort() {
 		e.Abort() // retry abort
 	}
 
-	e.Logger.Debug(fmt.Sprintf(
+	e.Logger.Info(fmt.Sprintf(
 		"replication task: %v encountered abort event",
 		e.taskID,
-	))
+	), tag.WorkflowRunID(e.replicationTask.RawTaskInfo.RunId))
 	// should not emit metrics since abort means shutdown
 }
 
@@ -253,10 +253,10 @@ func (e *ExecutableTaskImpl) Cancel() {
 		e.Cancel() // retry cancel
 	}
 
-	e.Logger.Debug(fmt.Sprintf(
+	e.Logger.Info(fmt.Sprintf(
 		"replication task: %v encountered cancellation event",
-		e.taskID,
-	))
+		e.taskID),
+		tag.WorkflowRunID(e.replicationTask.RawTaskInfo.RunId))
 	now := time.Now().UTC()
 	e.emitFinishMetrics(now)
 }
