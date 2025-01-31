@@ -498,6 +498,7 @@ func (r *HistoryReplicatorImpl) doApplyEvents(
 			if err != nil {
 				return err
 			}
+			r.logger.Info(fmt.Sprintf("Applying. StartEvent: %v, endEvent: %v, version: %v", task.getFirstEvent().EventId, task.getLastEvent().EventId, task.getFirstEvent().Version), tag.WorkflowRunID(task.getRunID()))
 
 			mutableState, isRebuilt, err := r.mutableStateMapper.GetOrRebuildCurrentMutableState(
 				ctx,
