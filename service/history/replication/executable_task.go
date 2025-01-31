@@ -336,7 +336,7 @@ func (e *ExecutableTaskImpl) Resend(
 	remainingAttempt int,
 ) (bool, error) {
 	e.MetricsHandler.Counter("replication-task-resend").Record(1)
-	e.Logger.Error(fmt.Sprintf("Resending. FirstEvent: %v, EndEvent: %v, Version: %v", retryErr.StartEventId, retryErr.EndEventId, retryErr.EndEventVersion), tag.WorkflowRunID(retryErr.RunId))
+	e.Logger.Error(fmt.Sprintf("Resending. FirstEvent: %v, EndEvent: %v, Version: %v, rawTask: %v", retryErr.StartEventId, retryErr.EndEventId, retryErr.EndEventVersion, e.replicationTask.RawTaskInfo), tag.WorkflowRunID(retryErr.RunId))
 	remainingAttempt--
 	if remainingAttempt < 0 {
 		e.Logger.Error("resend history attempts exceeded",
