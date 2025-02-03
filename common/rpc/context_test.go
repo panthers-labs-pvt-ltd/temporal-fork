@@ -99,3 +99,29 @@ func (s *contextSuite) TestCopyContextValue_ValueNotOverWritten() {
 
 	s.Equal(newValue, newContext.Value(key))
 }
+
+func (s *contextSuite) TestCopyContextValue_Cancelled() {
+	key := struct{}{}
+
+	dstValue := "dstValue"
+	dst, dstCancel := context.WithCancel(
+		context.WithValue(context.Background(), key, dstValue))
+
+	srcValue := "srcValue"
+	src, srcCancel := context.WithCancel(
+		context.WithValue(context.Background(), key, srcValue))
+
+	newContext := CopyContextValues(dst, src)
+
+	s.Equal(dstValue, newContext.Value(key))
+
+	s.NoError(newContext.Err())
+	// Cancelling the src context will not cancel its returned context.
+	srcCancel()
+	s.NoError(newContext.Err())
+
+	// Cancelling the dst context will cancel its returned context.
+	dstCancel()
+	s.Error(newContext.Err())
+	s.IsType(context.Canceled, newContext.Err())
+}
