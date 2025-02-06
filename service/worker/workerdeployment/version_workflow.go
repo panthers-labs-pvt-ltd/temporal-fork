@@ -90,6 +90,7 @@ func (d *VersionWorkflowRunner) listenToSignals(ctx workflow.Context) {
 	selector := workflow.NewSelector(ctx)
 	selector.AddReceive(forceCANSignalChannel, func(c workflow.ReceiveChannel, more bool) {
 		// Process Signal
+		c.Receive(ctx, nil)
 		forceCAN = true
 	})
 	selector.AddReceive(drainageStatusSignalChannel, func(c workflow.ReceiveChannel, more bool) {
@@ -194,6 +195,8 @@ func (d *VersionWorkflowRunner) run(ctx workflow.Context) error {
 	if err != nil {
 		return err
 	}
+
+	fmt.Println("Version workflow gonna continue-as-new")
 
 	// Before continue-as-new or done, stop drainage wf if it exists.
 	if d.drainageWorkflowFuture != nil {

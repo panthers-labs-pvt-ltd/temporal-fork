@@ -137,6 +137,16 @@ func (s *WorkerDeploymentSuite) startVersionWorkflow(ctx context.Context, tv *te
 	}, time.Second*5, time.Millisecond*200)
 }
 
+func (s *WorkerDeploymentSuite) TestSetCurrentBad_WhyAreYouNotWorking() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
+	defer cancel()
+	tv := testvars.New(s)
+
+	firstVersion := tv.WithBuildIDNumber(1)
+
+	s.setCurrentVersion(ctx, firstVersion, firstVersion.DeploymentVersionString(), true, "")
+}
+
 func (s *WorkerDeploymentSuite) TestDescribeWorkerDeployment_TwoVersions() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
 	defer cancel()
@@ -1146,9 +1156,13 @@ func (s *WorkerDeploymentSuite) setCurrentVersionUnversionedOption(ctx context.C
 	version := tv.DeploymentVersionString()
 	if unversioned {
 		version = worker_versioning.UnversionedVersionId
-	} else {
-		s.ensureCreateVersionInDeployment(tv)
 	}
+	// } else {
+	// 	s.ensureCreateVersionInDeployment(tv)
+	// }
+
+	fmt.Println("version", version)
+	fmt.Println("DeploymentName", tv.DeploymentVersion().GetDeploymentName())
 
 	resp, err := s.FrontendClient().SetWorkerDeploymentCurrentVersion(ctx, &workflowservice.SetWorkerDeploymentCurrentVersionRequest{
 		Namespace:               s.Namespace().String(),
