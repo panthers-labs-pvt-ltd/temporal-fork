@@ -1259,15 +1259,11 @@ func (d *ClientImpl) deploymentStateToDeploymentInfo(ctx context.Context, namesp
 
 	workerDeploymentInfo.RoutingConfig = state.RoutingConfig
 
-	for _, v := range state.Versions {
-		versionInfo, err := d.DescribeVersion(ctx, namespaceEntry, v.Version)
-		if err != nil {
-			return nil, err
-		}
+	for _, vs := range state.Versions {
 		workerDeploymentInfo.VersionSummaries = append(workerDeploymentInfo.VersionSummaries, &deploymentpb.WorkerDeploymentInfo_WorkerDeploymentVersionSummary{
-			Version:        versionInfo.Version,
-			CreateTime:     versionInfo.CreateTime,
-			DrainageStatus: versionInfo.GetDrainageInfo().GetStatus(),
+			Version:        vs.Version,
+			CreateTime:     vs.CreateTime,
+			DrainageStatus: vs.DrainageStatus,
 		})
 	}
 

@@ -48,13 +48,14 @@ type (
 	// WorkflowRunner holds the local state while running a deployment-series workflow
 	WorkflowRunner struct {
 		*deploymentspb.WorkerDeploymentWorkflowArgs
-		a              *Activities
-		logger         sdklog.Logger
-		metrics        sdkclient.MetricsHandler
-		lock           workflow.Mutex
-		pendingUpdates int
-		conflictToken  []byte
-		done           bool
+		a                *Activities
+		logger           sdklog.Logger
+		metrics          sdkclient.MetricsHandler
+		lock             workflow.Mutex
+		pendingUpdates   int
+		conflictToken    []byte
+		done             bool
+		signalsCompleted bool
 	}
 )
 
@@ -68,6 +69,34 @@ func Workflow(ctx workflow.Context, args *deploymentspb.WorkerDeploymentWorkflow
 		lock:    workflow.NewMutex(ctx),
 	}
 	return workflowRunner.run(ctx)
+}
+
+func (d *WorkflowRunner) listenToSignals(ctx workflow.Context) {
+	// Fetch signal channels
+	forceCANSignalChannel := workflow.GetSignalChannel(ctx, ForceCANSignalName)
+	forceCAN := false
+	drainageStatusSignalChannel := workflow.GetSignalChannel(ctx, SyncDrainageSignalName)
+
+	selector := workflow.NewSelector(ctx)
+	selector.AddReceive(forceCANSignalChannel, func(c workflow.ReceiveChannel, more bool) {
+		// Process Signal
+		forceCAN = true
+	})
+	selector.AddReceive(drainageStatusSignalChannel, func(c workflow.ReceiveChannel, more bool) {
+		var args *deploymentspb.SyncDrainageStatusSignalArgs
+		c.Receive(ctx, &args)
+		for _, vs := range d.State.GetVersions() {
+			if vs.Version == args.Version {
+				vs.DrainageStatus = args.DrainageStatus
+			}
+		}
+	})
+	for (!workflow.GetInfo(ctx).GetContinueAsNewSuggested() && !forceCAN) || selector.HasPending() {
+		selector.Select(ctx)
+	}
+
+	// Done processing signals before CAN
+	d.signalsCompleted = true
 }
 
 func (d *WorkflowRunner) run(ctx workflow.Context) error {
@@ -143,9 +172,7 @@ func (d *WorkflowRunner) run(ctx workflow.Context) error {
 		return err
 	}
 	// Wait until we can continue as new or are cancelled.
-	err = workflow.Await(ctx, func() bool {
-		return (workflow.GetInfo(ctx).GetContinueAsNewSuggested() && d.pendingUpdates == 0) || d.done
-	})
+	err = workflow.Await(ctx, func() bool { return (d.signalsCompleted && d.pendingUpdates == 0) || d.done })
 	if err != nil {
 		return err
 	}

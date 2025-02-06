@@ -85,14 +85,14 @@ func (d *VersionWorkflowRunner) listenToSignals(ctx workflow.Context) {
 	// Fetch signal channels
 	forceCANSignalChannel := workflow.GetSignalChannel(ctx, ForceCANSignalName)
 	forceCAN := false
-	drainageStatusSignalChannel := workflow.GetSignalChannel(ctx, SyncDrainageSignalName)
+	drainageInfoSignalChannel := workflow.GetSignalChannel(ctx, SyncDrainageSignalName)
 
 	selector := workflow.NewSelector(ctx)
 	selector.AddReceive(forceCANSignalChannel, func(c workflow.ReceiveChannel, more bool) {
 		// Process Signal
 		forceCAN = true
 	})
-	selector.AddReceive(drainageStatusSignalChannel, func(c workflow.ReceiveChannel, more bool) {
+	selector.AddReceive(drainageInfoSignalChannel, func(c workflow.ReceiveChannel, more bool) {
 		var args *deploymentspb.SyncDrainageInfoSignalArgs
 		c.Receive(ctx, &args)
 		newDrainageInfo := d.VersionState.GetDrainageInfo()
@@ -100,11 +100,12 @@ func (d *VersionWorkflowRunner) listenToSignals(ctx workflow.Context) {
 			newDrainageInfo = &deploymentpb.VersionDrainageInfo{}
 		}
 		newDrainageInfo.LastCheckedTime = args.GetDrainageInfo().GetLastCheckedTime()
-		if newDrainageInfo.GetStatus() != args.GetDrainageInfo().GetStatus() {
+		if d.VersionState.GetDrainageInfo().GetStatus() != args.GetDrainageInfo().GetStatus() {
 			newDrainageInfo.Status = args.GetDrainageInfo().GetStatus()
 			newDrainageInfo.LastChangedTime = args.GetDrainageInfo().GetLastCheckedTime()
 		}
 		d.VersionState.DrainageInfo = newDrainageInfo
+		d.syncDrainageToDeployment(ctx)
 	})
 
 	for (!workflow.GetInfo(ctx).GetContinueAsNewSuggested() && !forceCAN) || selector.HasPending() {
@@ -113,6 +114,18 @@ func (d *VersionWorkflowRunner) listenToSignals(ctx workflow.Context) {
 
 	// Done processing signals before CAN
 	d.signalsCompleted = true
+}
+
+func (d *VersionWorkflowRunner) syncDrainageToDeployment(ctx workflow.Context) {
+	wfId := worker_versioning.GenerateDeploymentWorkflowID(d.VersionState.GetVersion().GetDeploymentName())
+	args := &deploymentspb.SyncDrainageStatusSignalArgs{
+		Version:        worker_versioning.WorkerDeploymentVersionToString(d.VersionState.Version),
+		DrainageStatus: d.VersionState.DrainageInfo.GetStatus(),
+	}
+	err := workflow.SignalExternalWorkflow(ctx, wfId, "", SyncDrainageSignalName, args).Get(ctx, nil)
+	if err != nil {
+		d.logger.Error(fmt.Sprintf("error syncing drainage status to deployment: %s", err.Error()))
+	}
 }
 
 func (d *VersionWorkflowRunner) run(ctx workflow.Context) error {

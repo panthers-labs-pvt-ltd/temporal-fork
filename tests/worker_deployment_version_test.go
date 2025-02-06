@@ -321,7 +321,7 @@ func (s *DeploymentVersionSuite) TestDrainageStatus_SetCurrentVersion_NoOpenWFs(
 		LastCheckedTime: nil, // don't test this now
 	})
 
-	time.Sleep(testVersionDrainageVisibilityGracePeriod)
+	time.Sleep(testVersionDrainageVisibilityGracePeriod * 2)
 
 	// tv1 should now be "drained"
 	s.checkVersionDrainage(ctx, tv1, &deploymentpb.VersionDrainageInfo{
