@@ -93,16 +93,18 @@ func (d *VersionWorkflowRunner) listenToSignals(ctx workflow.Context) {
 		forceCAN = true
 	})
 	selector.AddReceive(drainageStatusSignalChannel, func(c workflow.ReceiveChannel, more bool) {
-		var newInfo *deploymentpb.VersionDrainageInfo
-		c.Receive(ctx, &newInfo)
-		if d.VersionState.GetDrainageInfo() == nil {
-			d.VersionState.DrainageInfo = &deploymentpb.VersionDrainageInfo{}
+		var args *deploymentspb.SyncDrainageInfoSignalArgs
+		c.Receive(ctx, &args)
+		newDrainageInfo := d.VersionState.GetDrainageInfo()
+		if newDrainageInfo == nil {
+			newDrainageInfo = &deploymentpb.VersionDrainageInfo{}
 		}
-		d.VersionState.DrainageInfo.LastCheckedTime = newInfo.LastCheckedTime
-		if d.VersionState.GetDrainageInfo().GetStatus() != newInfo.Status {
-			d.VersionState.DrainageInfo.Status = newInfo.Status
-			d.VersionState.DrainageInfo.LastChangedTime = newInfo.LastCheckedTime
+		newDrainageInfo.LastCheckedTime = args.GetDrainageInfo().GetLastCheckedTime()
+		if newDrainageInfo.GetStatus() != args.GetDrainageInfo().GetStatus() {
+			newDrainageInfo.Status = args.GetDrainageInfo().GetStatus()
+			newDrainageInfo.LastChangedTime = args.GetDrainageInfo().GetLastCheckedTime()
 		}
+		d.VersionState.DrainageInfo = newDrainageInfo
 	})
 
 	for (!workflow.GetInfo(ctx).GetContinueAsNewSuggested() && !forceCAN) || selector.HasPending() {

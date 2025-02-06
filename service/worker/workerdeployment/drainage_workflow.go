@@ -51,12 +51,14 @@ func DrainageWorkflowWithDurations(visibilityGracePeriod, refreshInterval time.D
 		if first { // skip if resuming after the parent continued-as-new
 			parentWf := workflow.GetInfo(ctx).ParentWorkflowExecution
 			now := timestamppb.Now()
-			drainingInfo := &deploymentpb.VersionDrainageInfo{
-				Status:          enumspb.VERSION_DRAINAGE_STATUS_DRAINING,
-				LastChangedTime: now,
-				LastCheckedTime: now,
+			args := &deploymentspb.SyncDrainageInfoSignalArgs{
+				DrainageInfo: &deploymentpb.VersionDrainageInfo{
+					Status:          enumspb.VERSION_DRAINAGE_STATUS_DRAINING,
+					LastChangedTime: now,
+					LastCheckedTime: now,
+				},
 			}
-			err := workflow.SignalExternalWorkflow(ctx, parentWf.ID, parentWf.RunID, SyncDrainageSignalName, drainingInfo).Get(ctx, nil)
+			err := workflow.SignalExternalWorkflow(ctx, parentWf.ID, parentWf.RunID, SyncDrainageSignalName, args).Get(ctx, nil)
 			if err != nil {
 				return err
 			}
