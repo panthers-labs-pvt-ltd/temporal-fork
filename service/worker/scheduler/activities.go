@@ -180,6 +180,7 @@ func (a *activities) tryWatchWorkflow(ctx context.Context, req *schedulespb.Watc
 		a.Logger,
 		a.maxBlobSize()-recordOverheadSize,
 	)
+	a.Logger.Info(fmt.Sprintf("POLL STATUS: %+v", pollRes.WorkflowStatus))
 	if pollRes.WorkflowStatus == enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
 		return rb.Build(nil)
 	}
