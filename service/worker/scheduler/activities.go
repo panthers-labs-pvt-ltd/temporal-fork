@@ -327,6 +327,7 @@ func (r responseBuilder) Build(event *historypb.HistoryEvent) (*schedulespb.Watc
 		return r.makeResponse(nil, nil, nil), nil
 	case enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED:
 		if attrs := event.GetWorkflowExecutionCompletedEventAttributes(); attrs == nil {
+			r.logger.Info(fmt.Sprintf("PPV: event: %+v, attrs: %+v", event, event.GetWorkflowExecutionCompletedEventAttributes()))
 			return nil, errNoAttrs
 		} else if len(attrs.NewExecutionRunId) > 0 {
 			// this shouldn't happen because we don't allow old-cron workflows as scheduled, but follow it anyway
