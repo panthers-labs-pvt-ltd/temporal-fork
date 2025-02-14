@@ -262,7 +262,7 @@ func GetVersionHistoryEventVersion(v *historyspb.VersionHistory, eventID int64) 
 		buf := make([]byte, 102400)
 		n := runtime.Stack(buf, false)
 		fmt.Printf("GetVersionHistoryEventVersion Stack trace:\n%s\n", buf[:n])
-		return 0, serviceerror.NewInternal(fmt.Sprintf("input event ID is not in range, eventID: %v", eventID))
+		return 0, serviceerror.NewInternal(fmt.Sprintf("input event ID is not in range, eventID: %v, versionHistory: %v", eventID, v))
 	}
 
 	// items are sorted by eventID & version
@@ -276,7 +276,7 @@ func GetVersionHistoryEventVersion(v *historyspb.VersionHistory, eventID int64) 
 	buf := make([]byte, 102400)
 	n := runtime.Stack(buf, false)
 	fmt.Printf("GetVersionHistoryEventVersion Stack trace:\n%s\n", buf[:n])
-	return 0, serviceerror.NewInternal(fmt.Sprintf("input event ID is not in range, eventID: %v", eventID))
+	return 0, serviceerror.NewInternal(fmt.Sprintf("input event ID is not in range, eventID: %v, versionHistory: %v", eventID, v))
 }
 
 // IsEmptyVersionHistory indicate whether version history is empty
