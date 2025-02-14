@@ -26,6 +26,7 @@ package versionhistory
 
 import (
 	"fmt"
+	"runtime"
 
 	"go.temporal.io/api/serviceerror"
 	historyspb "go.temporal.io/server/api/history/v1"
@@ -258,6 +259,9 @@ func GetVersionHistoryEventVersion(v *historyspb.VersionHistory, eventID int64) 
 		return 0, err
 	}
 	if eventID < common.FirstEventID || eventID > lastItem.GetEventId() {
+		buf := make([]byte, 102400)
+		n := runtime.Stack(buf, false)
+		fmt.Printf("GetVersionHistoryEventVersion Stack trace:\n%s\n", buf[:n])
 		return 0, serviceerror.NewInternal(fmt.Sprintf("input event ID is not in range, eventID: %v", eventID))
 	}
 
@@ -269,6 +273,9 @@ func GetVersionHistoryEventVersion(v *historyspb.VersionHistory, eventID int64) 
 			return currentItem.GetVersion(), nil
 		}
 	}
+	buf := make([]byte, 102400)
+	n := runtime.Stack(buf, false)
+	fmt.Printf("GetVersionHistoryEventVersion Stack trace:\n%s\n", buf[:n])
 	return 0, serviceerror.NewInternal(fmt.Sprintf("input event ID is not in range, eventID: %v", eventID))
 }
 
