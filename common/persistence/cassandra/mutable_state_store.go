@@ -79,7 +79,7 @@ const (
 		`VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS `
 
 	templateGetWorkflowExecutionQuery = `SELECT execution, execution_encoding, execution_state, execution_state_encoding, next_event_id, activity_map, activity_map_encoding, timer_map, timer_map_encoding, ` +
-		`child_executions_map, child_executions_map_encoding, request_cancel_map, request_cancel_map_encoding, signal_map, signal_map_encoding, signal_requested, buffered_events_list, ` +
+		`child_executions_map, child_executions_map_encoding, request_cancel_map, request_cancel_map_encoding, signal_map, signal_map_encoding, signal_requested, buffered_events_set, ` +
 		`checksum, checksum_encoding, db_record_version ` +
 		`FROM executions ` +
 		`WHERE shard_id = ? ` +
@@ -263,7 +263,7 @@ const (
 		`and task_id = ? `
 
 	templateAppendBufferedEventsQuery = `UPDATE executions ` +
-		`SET buffered_events_list = buffered_events_list + ? ` +
+		`SET buffered_events_set = buffered_events_set + ? ` +
 		`WHERE shard_id = ? ` +
 		`and type = ? ` +
 		`and namespace_id = ? ` +
@@ -273,7 +273,7 @@ const (
 		`and task_id = ? `
 
 	templateDeleteBufferedEventsQuery = `UPDATE executions ` +
-		`SET buffered_events_list = [] ` +
+		`SET buffered_events_set = {} ` +
 		`WHERE shard_id = ? ` +
 		`and type = ? ` +
 		`and namespace_id = ? ` +
@@ -541,7 +541,7 @@ func (d *MutableStateStore) GetWorkflowExecution(
 	state.SignalInfos = signalInfos
 	state.SignalRequestedIDs = gocql.UUIDsToStringSlice(result["signal_requested"])
 
-	eList := result["buffered_events_list"].([]map[string]interface{})
+	eList := result["buffered_events_set"].([]map[string]interface{})
 	bufferedEventsBlobs := make([]*commonpb.DataBlob, 0, len(eList))
 	for _, v := range eList {
 		blob := createHistoryEventBatchBlob(v)

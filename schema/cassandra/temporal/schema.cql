@@ -42,7 +42,7 @@ CREATE TABLE executions (
   signal_map                     map<bigint, blob>,
   signal_map_encoding            text,
   signal_requested               set<uuid>,
-  buffered_events_list           list<frozen<serialized_event_batch>>,
+  buffered_events_set            set<frozen<serialized_event_batch>>,
   workflow_last_write_version    bigint,
   workflow_state                 int,
   checksum                       blob,
