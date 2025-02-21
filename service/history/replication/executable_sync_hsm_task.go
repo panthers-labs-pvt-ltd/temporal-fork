@@ -53,6 +53,7 @@ type (
 
 		definition.WorkflowKey
 		ExecutableTask
+		executableTask *ExecutableTaskImpl
 
 		taskAttr *replicationspb.SyncHSMAttributes
 	}
@@ -73,22 +74,25 @@ func NewExecutableSyncHSMTask(
 	priority enumsspb.TaskPriority,
 	replicationTask *replicationspb.ReplicationTask,
 ) *ExecutableSyncHSMTask {
+	et := NewExecutableTask(
+		processToolBox,
+		taskID,
+		metrics.SyncHSMTaskScope,
+		taskCreationTime,
+		time.Now().UTC(),
+		sourceClusterName,
+		sourceShardKey,
+		priority,
+		replicationTask,
+	)
 	return &ExecutableSyncHSMTask{
 		ProcessToolBox: processToolBox,
 
 		WorkflowKey: definition.NewWorkflowKey(task.NamespaceId, task.WorkflowId, task.RunId),
-		ExecutableTask: NewExecutableTask(
-			processToolBox,
-			taskID,
-			metrics.SyncHSMTaskScope,
-			taskCreationTime,
-			time.Now().UTC(),
-			sourceClusterName,
-			sourceShardKey,
-			priority,
-			replicationTask,
-		),
-		taskAttr: task,
+
+		ExecutableTask: et,
+		executableTask: et,
+		taskAttr:       task,
 	}
 }
 
@@ -97,6 +101,7 @@ func (e *ExecutableSyncHSMTask) QueueID() interface{} {
 }
 
 func (e *ExecutableSyncHSMTask) Execute() error {
+	e.executableTask.TaskStartProcessingTime = time.Now().UTC()
 	if e.TerminalState() {
 		return nil
 	}

@@ -132,14 +132,15 @@ type (
 		ProcessToolBox
 
 		// immutable data
-		taskID            int64
-		metricsTag        string
-		taskCreationTime  time.Time
-		taskReceivedTime  time.Time
-		sourceClusterName string
-		sourceShardKey    ClusterShardKey
-		taskPriority      enumsspb.TaskPriority
-		replicationTask   *replicationspb.ReplicationTask
+		taskID                  int64
+		metricsTag              string
+		taskCreationTime        time.Time
+		taskReceivedTime        time.Time
+		TaskStartProcessingTime time.Time
+		sourceClusterName       string
+		sourceShardKey          ClusterShardKey
+		taskPriority            enumsspb.TaskPriority
+		replicationTask         *replicationspb.ReplicationTask
 
 		// mutable data
 		taskState              int32
@@ -320,7 +321,7 @@ func (e *ExecutableTaskImpl) emitFinishMetrics(
 		nsTag = metrics.NamespaceTag(item.(namespace.Name).String())
 	}
 	metrics.ServiceLatency.With(e.MetricsHandler).Record(
-		now.Sub(e.taskReceivedTime),
+		now.Sub(e.TaskStartProcessingTime),
 		metrics.OperationTag(e.metricsTag),
 		nsTag,
 	)

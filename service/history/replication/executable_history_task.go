@@ -55,6 +55,7 @@ type (
 
 		definition.WorkflowKey
 		ExecutableTask
+		et                  *ExecutableTaskImpl
 		baseExecutionInfo   *workflowspb.BaseExecutionInfo
 		versionHistoryItems []*historyspb.VersionHistoryItem
 		eventsBlobs         []*commonpb.DataBlob
@@ -91,21 +92,23 @@ func NewExecutableHistoryTask(
 	if eventBatches == nil {
 		eventBatches = []*commonpb.DataBlob{task.GetEvents()}
 	}
+	et := NewExecutableTask(
+		processToolBox,
+		taskID,
+		metrics.HistoryReplicationTaskScope,
+		taskCreationTime,
+		time.Now().UTC(),
+		sourceClusterName,
+		sourceShardKey,
+		priority,
+		replicationTask,
+	)
 	return &ExecutableHistoryTask{
 		ProcessToolBox: processToolBox,
 
-		WorkflowKey: definition.NewWorkflowKey(task.NamespaceId, task.WorkflowId, task.RunId),
-		ExecutableTask: NewExecutableTask(
-			processToolBox,
-			taskID,
-			metrics.HistoryReplicationTaskScope,
-			taskCreationTime,
-			time.Now().UTC(),
-			sourceClusterName,
-			sourceShardKey,
-			priority,
-			replicationTask,
-		),
+		WorkflowKey:    definition.NewWorkflowKey(task.NamespaceId, task.WorkflowId, task.RunId),
+		ExecutableTask: et,
+		et:             et,
 
 		baseExecutionInfo:   task.BaseExecutionInfo,
 		versionHistoryItems: task.VersionHistoryItems,
@@ -121,6 +124,7 @@ func (e *ExecutableHistoryTask) QueueID() interface{} {
 }
 
 func (e *ExecutableHistoryTask) Execute() error {
+	e.et.TaskStartProcessingTime = time.Now().UTC()
 	if e.TerminalState() {
 		return nil
 	}

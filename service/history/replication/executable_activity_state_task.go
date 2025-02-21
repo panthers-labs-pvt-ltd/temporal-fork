@@ -50,6 +50,7 @@ type (
 
 		definition.WorkflowKey
 		ExecutableTask
+		et  *ExecutableTaskImpl
 		req *historyservice.SyncActivityRequest
 
 		// following fields are used only for batching functionality
@@ -72,21 +73,23 @@ func NewExecutableActivityStateTask(
 	priority enumsspb.TaskPriority,
 	replicationTask *replicationspb.ReplicationTask,
 ) *ExecutableActivityStateTask {
+	et := NewExecutableTask(
+		processToolBox,
+		taskID,
+		metrics.SyncActivityTaskScope,
+		taskCreationTime,
+		time.Now().UTC(),
+		sourceClusterName,
+		sourceShardKey,
+		priority,
+		replicationTask,
+	)
 	return &ExecutableActivityStateTask{
 		ProcessToolBox: processToolBox,
 
-		WorkflowKey: definition.NewWorkflowKey(task.NamespaceId, task.WorkflowId, task.RunId),
-		ExecutableTask: NewExecutableTask(
-			processToolBox,
-			taskID,
-			metrics.SyncActivityTaskScope,
-			taskCreationTime,
-			time.Now().UTC(),
-			sourceClusterName,
-			sourceShardKey,
-			priority,
-			replicationTask,
-		),
+		WorkflowKey:    definition.NewWorkflowKey(task.NamespaceId, task.WorkflowId, task.RunId),
+		ExecutableTask: et,
+		et:             et,
 		req: &historyservice.SyncActivityRequest{
 			NamespaceId:                task.NamespaceId,
 			WorkflowId:                 task.WorkflowId,
@@ -147,6 +150,7 @@ func (e *ExecutableActivityStateTask) QueueID() interface{} {
 }
 
 func (e *ExecutableActivityStateTask) Execute() error {
+	e.et.TaskStartProcessingTime = time.Now().UTC()
 	if e.TerminalState() {
 		return nil
 	}
