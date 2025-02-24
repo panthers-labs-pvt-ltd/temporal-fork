@@ -268,7 +268,7 @@ func (c *ContextImpl) LoadMutableState(ctx context.Context, shardContext shard.C
 			return nil, err
 		}
 
-		c.MutableState, err = NewMutableStateFromDB(
+		ms, err := NewMutableStateFromDB(
 			shardContext,
 			shardContext.GetEventsCache(),
 			c.logger,
@@ -279,6 +279,10 @@ func (c *ContextImpl) LoadMutableState(ctx context.Context, shardContext shard.C
 		if err != nil {
 			return nil, err
 		}
+
+		// if ms is nil, then after c.MutableState = ms,
+		// c.MutableState != nil, but points to a nil *MutableStateImpl
+		c.MutableState = ms
 	}
 
 	flushBeforeReady, err := c.MutableState.StartTransaction(namespaceEntry)
