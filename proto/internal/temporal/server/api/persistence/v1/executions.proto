@@ -287,6 +287,12 @@ message WorkflowExecutionInfo {
     map<string, ResetChildInfo> children_initialized_post_reset_point = 102;
     // The worker deployment that completed the last WFT.
     string worker_deployment_name = 103;
+
+    BufferedEventStats buffered_event_stats = 104;
+}
+
+message BufferedEventStats {
+    int32 count = 1;
 }
 
 message ExecutionStats {

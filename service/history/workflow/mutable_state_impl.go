@@ -466,6 +466,13 @@ func NewMutableStateFromDB(
 		mutableState.executionState.StartTime = dbRecord.ExecutionInfo.StartTime
 	}
 
+	bufferedEventsStats := mutableState.executionInfo.BufferedEventStats
+	if bufferedEventsStats != nil && bufferedEventsStats.Count != int32(len(dbRecord.BufferedEvents)) {
+		msg := fmt.Sprintf("buffered events count mismatch, expected: %v, actual: %v", bufferedEventsStats.Count, len(dbRecord.BufferedEvents))
+		mutableState.logError(msg)
+		return nil, serviceerror.NewUnavailable(msg)
+	}
+
 	mutableState.hBuilder = historybuilder.New(
 		mutableState.timeSource,
 		mutableState.shard.GenerateTaskIDs,
@@ -6534,6 +6541,9 @@ func (ms *MutableStateImpl) closeTransactionPrepareEvents(
 
 	// TODO @wxing1292 need more refactoring to make the logic clean
 	ms.bufferEventsInDB = historyMutation.MemBufferBatch
+	ms.executionInfo.BufferedEventStats = &persistencespb.BufferedEventStats{
+		Count: int32(len(ms.bufferEventsInDB)),
+	}
 	newBufferBatch := historyMutation.DBBufferBatch
 	clearBuffer := historyMutation.DBClearBuffer
 	newEventsBatches := historyMutation.DBEventsBatches
