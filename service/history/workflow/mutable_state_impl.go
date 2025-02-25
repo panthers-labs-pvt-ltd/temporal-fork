@@ -5954,9 +5954,11 @@ func (ms *MutableStateImpl) closeTransaction(
 	); err != nil {
 		return closeTransactionResult{}, err
 	}
-	buf := make([]byte, 10240) // Pre-allocate a buffer
-	n := runtime.Stack(buf, false)
-	ms.logger.Info(fmt.Sprintf("state transition Stack trace:\n%s", buf[:n]), tag.WorkflowRunID(ms.executionState.RunId))
+	if ms.executionInfo.NamespaceId == "6e658a04-7092-4d4f-8e22-30f574279851" {
+		buf := make([]byte, 10240) // Pre-allocate a buffer
+		n := runtime.Stack(buf, false)
+		ms.logger.Info(fmt.Sprintf("state transition Stack trace:\n%s", buf[:n]), tag.WorkflowRunID(ms.executionState.RunId))
+	}
 	ms.executionInfo.StateTransitionCount += 1
 	ms.executionInfo.LastUpdateTime = timestamppb.New(ms.shard.GetTimeSource().Now())
 
