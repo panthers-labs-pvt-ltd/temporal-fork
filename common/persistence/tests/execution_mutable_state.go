@@ -431,6 +431,81 @@ func (s *ExecutionMutableStateSuite) TestCreate_ClosedWorkflow_UpdateCurrent() {
 	s.AssertHEEqualWithDB(newBranchToken, newEvents)
 }
 
+// func (s *ExecutionMutableStateSuite) TestUpdate_BufferedEvents() {
+// 	for i := 0; i < 1000; i++ {
+// 		s.NamespaceID = uuid.New().String()
+// 		s.WorkflowID = uuid.New().String()
+// 		s.RunID = uuid.New().String()
+
+// 		branchToken, newSnapshot, _ := s.CreateWorkflow(
+// 			rand.Int63(),
+// 			enumsspb.WORKFLOW_EXECUTION_STATE_CREATED,
+// 			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
+// 			rand.Int63(),
+// 		)
+
+// 		currentMutation, currentEvents := RandomMutation(
+// 			s.T(),
+// 			s.NamespaceID,
+// 			s.WorkflowID,
+// 			s.RunID,
+// 			newSnapshot.NextEventID,
+// 			rand.Int63(),
+// 			enumsspb.WORKFLOW_EXECUTION_STATE_RUNNING,
+// 			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
+// 			newSnapshot.DBRecordVersion+1,
+// 			branchToken,
+// 		)
+// 		currentMutation.NewBufferedEvents = []*historypb.HistoryEvent{RandomHistoryEvent(newSnapshot.NextEventID, rand.Int63())}
+// 		currentMutation.ClearBufferedEvents = false
+
+// 		_, err := s.ExecutionManager.UpdateWorkflowExecution(s.Ctx, &p.UpdateWorkflowExecutionRequest{
+// 			ShardID: s.ShardID,
+// 			RangeID: s.RangeID,
+// 			Mode:    p.UpdateWorkflowModeUpdateCurrent,
+
+// 			UpdateWorkflowMutation: *currentMutation,
+// 			UpdateWorkflowEvents:   currentEvents,
+
+// 			NewWorkflowSnapshot: nil,
+// 			NewWorkflowEvents:   nil,
+// 		})
+// 		s.NoError(err)
+
+// 		currentMutation2, currentEvents2 := RandomMutation(
+// 			s.T(),
+// 			s.NamespaceID,
+// 			s.WorkflowID,
+// 			s.RunID,
+// 			currentMutation.NextEventID,
+// 			rand.Int63(),
+// 			enumsspb.WORKFLOW_EXECUTION_STATE_RUNNING,
+// 			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
+// 			currentMutation.DBRecordVersion+1,
+// 			branchToken,
+// 		)
+// 		currentMutation2.NewBufferedEvents = nil
+// 		currentMutation2.ClearBufferedEvents = true
+
+// 		_, err = s.ExecutionManager.UpdateWorkflowExecution(s.Ctx, &p.UpdateWorkflowExecutionRequest{
+// 			ShardID: s.ShardID,
+// 			RangeID: s.RangeID,
+// 			Mode:    p.UpdateWorkflowModeUpdateCurrent,
+
+// 			UpdateWorkflowMutation: *currentMutation2,
+// 			UpdateWorkflowEvents:   currentEvents2,
+
+// 			NewWorkflowSnapshot: nil,
+// 			NewWorkflowEvents:   nil,
+// 		})
+// 		s.NoError(err)
+
+// 		s.AssertMSEqualWithDB(newSnapshot, currentMutation, currentMutation2)
+// 		// s.AssertHEEqualWithDB(branchToken, newEvents, currentEvents)
+
+// 	}
+// }
+
 func (s *ExecutionMutableStateSuite) TestUpdate_NotZombie() {
 	branchToken, newSnapshot, newEvents := s.CreateWorkflow(
 		rand.Int63(),

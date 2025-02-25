@@ -347,6 +347,7 @@ func NewMutableState(
 		VersionHistories:       versionhistory.NewVersionHistories(&historyspb.VersionHistory{}),
 		ExecutionStats:         &persistencespb.ExecutionStats{HistorySize: 0},
 		SubStateMachinesByType: make(map[string]*persistencespb.StateMachineMap),
+		CollectionStats:        &persistencespb.CollectionStats{},
 	}
 	if s.config.EnableNexus() {
 		s.executionInfo.TaskGenerationShardClockTimestamp = shard.CurrentVectorClock().GetClock()
@@ -466,9 +467,39 @@ func NewMutableStateFromDB(
 		mutableState.executionState.StartTime = dbRecord.ExecutionInfo.StartTime
 	}
 
-	bufferedEventsStats := mutableState.executionInfo.BufferedEventStats
-	if bufferedEventsStats != nil && bufferedEventsStats.Count != int32(len(dbRecord.BufferedEvents)) {
-		msg := fmt.Sprintf("buffered events count mismatch, expected: %v, actual: %v", bufferedEventsStats.Count, len(dbRecord.BufferedEvents))
+	collectionStats := mutableState.executionInfo.CollectionStats
+	if collectionStats.BufferedEventCount != int32(len(dbRecord.BufferedEvents)) {
+		msg := fmt.Sprintf("buffered events count mismatch, expected: %v, actual: %v", collectionStats.BufferedEventCount, len(dbRecord.BufferedEvents))
+		mutableState.logError(msg)
+		return nil, serviceerror.NewUnavailable(msg)
+	}
+	if collectionStats.ActivityCount != int32(len(dbRecord.ActivityInfos)) {
+		msg := fmt.Sprintf("ActivityInfos count mismatch, expected: %v, actual: %v", collectionStats.ActivityCount, len(dbRecord.ActivityInfos))
+		mutableState.logError(msg)
+		return nil, serviceerror.NewUnavailable(msg)
+	}
+	if collectionStats.UserTimerCount != int32(len(dbRecord.TimerInfos)) {
+		msg := fmt.Sprintf("TimerInfos count mismatch, expected: %v, actual: %v", collectionStats.UserTimerCount, len(dbRecord.TimerInfos))
+		mutableState.logError(msg)
+		return nil, serviceerror.NewUnavailable(msg)
+	}
+	if collectionStats.ChildWorkflowCount != int32(len(dbRecord.ChildExecutionInfos)) {
+		msg := fmt.Sprintf("ChildExecutionInfos count mismatch, expected: %v, actual: %v", collectionStats.ChildWorkflowCount, len(dbRecord.ChildExecutionInfos))
+		mutableState.logError(msg)
+		return nil, serviceerror.NewUnavailable(msg)
+	}
+	if collectionStats.RequestCancelExternalCount != int32(len(dbRecord.RequestCancelInfos)) {
+		msg := fmt.Sprintf("RequestCancelInfos count mismatch, expected: %v, actual: %v", collectionStats.RequestCancelExternalCount, len(dbRecord.RequestCancelInfos))
+		mutableState.logError(msg)
+		return nil, serviceerror.NewUnavailable(msg)
+	}
+	if collectionStats.SignalExternalCount != int32(len(dbRecord.SignalInfos)) {
+		msg := fmt.Sprintf("SignalInfos count mismatch, expected: %v, actual: %v", collectionStats.SignalExternalCount, len(dbRecord.SignalInfos))
+		mutableState.logError(msg)
+		return nil, serviceerror.NewUnavailable(msg)
+	}
+	if collectionStats.SignalRequestIdCount != int32(len(dbRecord.SignalRequestedIds)) {
+		msg := fmt.Sprintf("SignalRequestedIds count mismatch, expected: %v, actual: %v", collectionStats.SignalRequestIdCount, len(dbRecord.SignalRequestedIds))
 		mutableState.logError(msg)
 		return nil, serviceerror.NewUnavailable(msg)
 	}
@@ -5965,6 +5996,13 @@ func (ms *MutableStateImpl) closeTransaction(
 		return closeTransactionResult{}, err
 	}
 
+	ms.executionInfo.CollectionStats.ActivityCount = int32(len(ms.pendingActivityInfoIDs))
+	ms.executionInfo.CollectionStats.UserTimerCount = int32(len(ms.pendingTimerInfoIDs))
+	ms.executionInfo.CollectionStats.ChildWorkflowCount = int32(len(ms.pendingChildExecutionInfoIDs))
+	ms.executionInfo.CollectionStats.SignalExternalCount = int32(len(ms.pendingSignalInfoIDs))
+	ms.executionInfo.CollectionStats.RequestCancelExternalCount = int32(len(ms.pendingRequestCancelInfoIDs))
+	ms.executionInfo.CollectionStats.SignalRequestIdCount = int32(len(ms.pendingSignalRequestedIDs))
+
 	ms.closeTransactionTrackTombstones(transactionPolicy)
 
 	if err := ms.closeTransactionPrepareTasks(
@@ -6541,9 +6579,7 @@ func (ms *MutableStateImpl) closeTransactionPrepareEvents(
 
 	// TODO @wxing1292 need more refactoring to make the logic clean
 	ms.bufferEventsInDB = historyMutation.MemBufferBatch
-	ms.executionInfo.BufferedEventStats = &persistencespb.BufferedEventStats{
-		Count: int32(len(ms.bufferEventsInDB)),
-	}
+	ms.executionInfo.CollectionStats.BufferedEventCount = int32(len(ms.bufferEventsInDB))
 	newBufferBatch := historyMutation.DBBufferBatch
 	clearBuffer := historyMutation.DBClearBuffer
 	newEventsBatches := historyMutation.DBEventsBatches

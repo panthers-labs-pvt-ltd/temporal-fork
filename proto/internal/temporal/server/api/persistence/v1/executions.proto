@@ -288,11 +288,17 @@ message WorkflowExecutionInfo {
     // The worker deployment that completed the last WFT.
     string worker_deployment_name = 103;
 
-    BufferedEventStats buffered_event_stats = 104;
+    CollectionStats collection_stats = 104;
 }
 
-message BufferedEventStats {
-    int32 count = 1;
+message CollectionStats {
+    int32 buffered_event_count = 1;
+    int32 activity_count = 2;
+    int32 user_timer_count = 3;
+    int32 child_workflow_count = 4;
+    int32 request_cancel_external_count = 5;
+    int32 signal_external_count = 6;
+    int32 signal_request_id_count = 7;
 }
 
 message ExecutionStats {

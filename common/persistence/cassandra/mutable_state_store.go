@@ -273,8 +273,18 @@ const (
 		`and visibility_ts = ? ` +
 		`and task_id = ? `
 
-	templateDeleteBufferedEventsQuery = `DELETE buffered_events_list ` +
-		`FROM executions ` +
+		// templateDeleteBufferedEventsQuery = `DELETE buffered_events_list ` +
+		// 	`FROM executions ` +
+		// 	`WHERE shard_id = ? ` +
+		// 	`and type = ? ` +
+		// 	`and namespace_id = ? ` +
+		// 	`and workflow_id = ? ` +
+		// 	`and run_id = ? ` +
+		// 	`and visibility_ts = ? ` +
+		// 	`and task_id = ? `
+
+	templateDeleteBufferedEventsQuery = `UPDATE executions ` +
+		`SET buffered_events_list = [] ` +
 		`WHERE shard_id = ? ` +
 		`and type = ? ` +
 		`and namespace_id = ? ` +

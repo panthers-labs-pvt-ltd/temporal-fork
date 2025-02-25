@@ -103,35 +103,35 @@ func (this *WorkflowExecutionInfo) Equal(that interface{}) bool {
 	return proto.Equal(this, that1)
 }
 
-// Marshal an object of type BufferedEventStats to the protobuf v3 wire format
-func (val *BufferedEventStats) Marshal() ([]byte, error) {
+// Marshal an object of type CollectionStats to the protobuf v3 wire format
+func (val *CollectionStats) Marshal() ([]byte, error) {
 	return proto.Marshal(val)
 }
 
-// Unmarshal an object of type BufferedEventStats from the protobuf v3 wire format
-func (val *BufferedEventStats) Unmarshal(buf []byte) error {
+// Unmarshal an object of type CollectionStats from the protobuf v3 wire format
+func (val *CollectionStats) Unmarshal(buf []byte) error {
 	return proto.Unmarshal(buf, val)
 }
 
 // Size returns the size of the object, in bytes, once serialized
-func (val *BufferedEventStats) Size() int {
+func (val *CollectionStats) Size() int {
 	return proto.Size(val)
 }
 
-// Equal returns whether two BufferedEventStats values are equivalent by recursively
+// Equal returns whether two CollectionStats values are equivalent by recursively
 // comparing the message's fields.
 // For more information see the documentation for
 // https://pkg.go.dev/google.golang.org/protobuf/proto#Equal
-func (this *BufferedEventStats) Equal(that interface{}) bool {
+func (this *CollectionStats) Equal(that interface{}) bool {
 	if that == nil {
 		return this == nil
 	}
 
-	var that1 *BufferedEventStats
+	var that1 *CollectionStats
 	switch t := that.(type) {
-	case *BufferedEventStats:
+	case *CollectionStats:
 		that1 = t
-	case BufferedEventStats:
+	case CollectionStats:
 		that1 = &t
 	default:
 		return false
