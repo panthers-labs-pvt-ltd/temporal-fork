@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -5953,7 +5954,9 @@ func (ms *MutableStateImpl) closeTransaction(
 	); err != nil {
 		return closeTransactionResult{}, err
 	}
-
+	buf := make([]byte, 10240) // Pre-allocate a buffer
+	n := runtime.Stack(buf, false)
+	ms.logger.Info(fmt.Sprintf("state transition Stack trace:\n%s", buf[:n]), tag.WorkflowRunID(ms.executionState.RunId))
 	ms.executionInfo.StateTransitionCount += 1
 	ms.executionInfo.LastUpdateTime = timestamppb.New(ms.shard.GetTimeSource().Now())
 
