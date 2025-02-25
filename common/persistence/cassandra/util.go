@@ -29,6 +29,8 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	persistencespb "go.temporal.io/server/api/persistence/v1"
 	"go.temporal.io/server/common/convert"
+	"go.temporal.io/server/common/log"
+	"go.temporal.io/server/common/log/tag"
 	p "go.temporal.io/server/common/persistence"
 	"go.temporal.io/server/common/persistence/nosql/nosqlplugin/cassandra/gocql"
 	"go.temporal.io/server/service/history/tasks"
@@ -38,6 +40,7 @@ func applyWorkflowMutationBatch(
 	batch *gocql.Batch,
 	shardID int32,
 	workflowMutation *p.InternalWorkflowMutation,
+	logger log.Logger,
 ) error {
 
 	// TODO update all call sites to update LastUpdatetime
@@ -142,6 +145,7 @@ func applyWorkflowMutationBatch(
 		namespaceID,
 		workflowID,
 		runID,
+		logger,
 	)
 
 	// transfer / replication / timer tasks
@@ -156,6 +160,7 @@ func applyWorkflowSnapshotBatchAsReset(
 	batch *gocql.Batch,
 	shardID int32,
 	workflowSnapshot *p.InternalWorkflowSnapshot,
+	logger log.Logger,
 ) error {
 
 	// TODO: update call site
@@ -252,6 +257,7 @@ func applyWorkflowSnapshotBatchAsReset(
 		namespaceID,
 		workflowID,
 		runID,
+		logger,
 	)
 
 	// transfer / replication / timer tasks
@@ -640,7 +646,9 @@ func deleteBufferedEvents(
 	namespaceID string,
 	workflowID string,
 	runID string,
+	logger log.Logger,
 ) {
+	logger.Info("Clearing buffered events", tag.WorkflowNamespaceID(namespaceID), tag.WorkflowID(workflowID), tag.WorkflowRunID(runID))
 	batch.Query(templateDeleteBufferedEventsQuery,
 		shardID,
 		rowTypeExecution,
@@ -1005,9 +1013,11 @@ func updateBufferedEvents(
 	namespaceID string,
 	workflowID string,
 	runID string,
+	logger log.Logger,
 ) {
 
 	if clearBufferedEvents {
+		logger.Info("Clearing buffered events", tag.WorkflowNamespaceID(namespaceID), tag.WorkflowID(workflowID), tag.WorkflowRunID(runID))
 		batch.Query(templateDeleteBufferedEventsQuery,
 			shardID,
 			rowTypeExecution,

@@ -33,6 +33,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	enumsspb "go.temporal.io/server/api/enums/v1"
+	"go.temporal.io/server/common/log"
 	p "go.temporal.io/server/common/persistence"
 	"go.temporal.io/server/common/persistence/nosql/nosqlplugin/cassandra/gocql"
 	"go.temporal.io/server/common/persistence/serialization"
@@ -272,8 +273,8 @@ const (
 		`and visibility_ts = ? ` +
 		`and task_id = ? `
 
-	templateDeleteBufferedEventsQuery = `UPDATE executions ` +
-		`SET buffered_events_list = [] ` +
+	templateDeleteBufferedEventsQuery = `DELETE buffered_events_list ` +
+		`FROM executions ` +
 		`WHERE shard_id = ? ` +
 		`and type = ? ` +
 		`and namespace_id = ? ` +
@@ -357,12 +358,17 @@ const (
 type (
 	MutableStateStore struct {
 		Session gocql.Session
+		logger  log.Logger
 	}
 )
 
-func NewMutableStateStore(session gocql.Session) *MutableStateStore {
+func NewMutableStateStore(
+	session gocql.Session,
+	logger log.Logger,
+) *MutableStateStore {
 	return &MutableStateStore{
 		Session: session,
+		logger:  logger,
 	}
 }
 
@@ -648,7 +654,7 @@ func (d *MutableStateStore) UpdateWorkflowExecution(
 		return serviceerror.NewInternal(fmt.Sprintf("UpdateWorkflowExecution: unknown mode: %v", request.Mode))
 	}
 
-	if err := applyWorkflowMutationBatch(batch, shardID, &updateWorkflow); err != nil {
+	if err := applyWorkflowMutationBatch(batch, shardID, &updateWorkflow, d.logger); err != nil {
 		return err
 	}
 	if newWorkflow != nil {
@@ -773,12 +779,12 @@ func (d *MutableStateStore) ConflictResolveWorkflowExecution(
 		return serviceerror.NewInternal(fmt.Sprintf("ConflictResolveWorkflowExecution: unknown mode: %v", request.Mode))
 	}
 
-	if err := applyWorkflowSnapshotBatchAsReset(batch, shardID, &resetWorkflow); err != nil {
+	if err := applyWorkflowSnapshotBatchAsReset(batch, shardID, &resetWorkflow, d.logger); err != nil {
 		return err
 	}
 
 	if currentWorkflow != nil {
-		if err := applyWorkflowMutationBatch(batch, shardID, currentWorkflow); err != nil {
+		if err := applyWorkflowMutationBatch(batch, shardID, currentWorkflow, d.logger); err != nil {
 			return err
 		}
 	}
@@ -956,7 +962,7 @@ func (d *MutableStateStore) SetWorkflowExecution(
 	shardID := request.ShardID
 	setSnapshot := request.SetWorkflowSnapshot
 
-	if err := applyWorkflowSnapshotBatchAsReset(batch, shardID, &setSnapshot); err != nil {
+	if err := applyWorkflowSnapshotBatchAsReset(batch, shardID, &setSnapshot, d.logger); err != nil {
 		return err
 	}
 
