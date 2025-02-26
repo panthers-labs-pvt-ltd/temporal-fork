@@ -5842,9 +5842,28 @@ func (ms *MutableStateImpl) StartTransaction(
 func (ms *MutableStateImpl) CloseTransactionAsMutation(
 	transactionPolicy TransactionPolicy,
 ) (*persistence.WorkflowMutation, []*persistence.WorkflowEvents, error) {
+
+	prevBufferedEventCount := int64(len(ms.bufferEventsInDB))
+
 	result, err := ms.closeTransaction(transactionPolicy)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	newBufferedEvents := make(map[int64]*historypb.HistoryEvent, len(result.bufferEvents))
+	if len(result.bufferEvents) != 0 {
+		id := prevBufferedEventCount + 1
+		for _, event := range result.bufferEvents {
+			newBufferedEvents[id] = event
+			id++
+		}
+	}
+
+	bufferedEventsToClear := make(map[int64]struct{}, prevBufferedEventCount)
+	if result.clearBuffer {
+		for id := int64(1); id <= prevBufferedEventCount; id++ {
+			bufferedEventsToClear[id] = struct{}{}
+		}
 	}
 
 	workflowMutation := &persistence.WorkflowMutation{
@@ -5864,8 +5883,8 @@ func (ms *MutableStateImpl) CloseTransactionAsMutation(
 		DeleteSignalInfos:         ms.deleteSignalInfos,
 		UpsertSignalRequestedIDs:  ms.updateSignalRequestedIDs,
 		DeleteSignalRequestedIDs:  ms.deleteSignalRequestedIDs,
-		NewBufferedEvents:         result.bufferEvents,
-		ClearBufferedEvents:       result.clearBuffer,
+		NewBufferedEvents:         newBufferedEvents,
+		BufferedEventsToClear:     bufferedEventsToClear,
 
 		Tasks: ms.InsertTasks,
 

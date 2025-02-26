@@ -431,80 +431,82 @@ func (s *ExecutionMutableStateSuite) TestCreate_ClosedWorkflow_UpdateCurrent() {
 	s.AssertHEEqualWithDB(newBranchToken, newEvents)
 }
 
-// func (s *ExecutionMutableStateSuite) TestUpdate_BufferedEvents() {
-// 	for i := 0; i < 1000; i++ {
-// 		s.NamespaceID = uuid.New().String()
-// 		s.WorkflowID = uuid.New().String()
-// 		s.RunID = uuid.New().String()
+func (s *ExecutionMutableStateSuite) TestUpdate_BufferedEvents() {
+	for i := 0; i < 1; i++ {
+		s.NamespaceID = uuid.New().String()
+		s.WorkflowID = uuid.New().String()
+		s.RunID = uuid.New().String()
 
-// 		branchToken, newSnapshot, _ := s.CreateWorkflow(
-// 			rand.Int63(),
-// 			enumsspb.WORKFLOW_EXECUTION_STATE_CREATED,
-// 			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
-// 			rand.Int63(),
-// 		)
+		branchToken, newSnapshot, _ := s.CreateWorkflow(
+			rand.Int63(),
+			enumsspb.WORKFLOW_EXECUTION_STATE_CREATED,
+			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
+			rand.Int63(),
+		)
 
-// 		currentMutation, currentEvents := RandomMutation(
-// 			s.T(),
-// 			s.NamespaceID,
-// 			s.WorkflowID,
-// 			s.RunID,
-// 			newSnapshot.NextEventID,
-// 			rand.Int63(),
-// 			enumsspb.WORKFLOW_EXECUTION_STATE_RUNNING,
-// 			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
-// 			newSnapshot.DBRecordVersion+1,
-// 			branchToken,
-// 		)
-// 		currentMutation.NewBufferedEvents = []*historypb.HistoryEvent{RandomHistoryEvent(newSnapshot.NextEventID, rand.Int63())}
-// 		currentMutation.ClearBufferedEvents = false
+		currentMutation, currentEvents := RandomMutation(
+			s.T(),
+			s.NamespaceID,
+			s.WorkflowID,
+			s.RunID,
+			newSnapshot.NextEventID,
+			rand.Int63(),
+			enumsspb.WORKFLOW_EXECUTION_STATE_RUNNING,
+			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
+			newSnapshot.DBRecordVersion+1,
+			branchToken,
+		)
+		currentMutation.NewBufferedEvents = map[int64]*historypb.HistoryEvent{
+			2: RandomHistoryEvent(newSnapshot.NextEventID, rand.Int63()),
+		}
+		currentMutation.BufferedEventsToClear = map[int64]struct{}{}
 
-// 		_, err := s.ExecutionManager.UpdateWorkflowExecution(s.Ctx, &p.UpdateWorkflowExecutionRequest{
-// 			ShardID: s.ShardID,
-// 			RangeID: s.RangeID,
-// 			Mode:    p.UpdateWorkflowModeUpdateCurrent,
+		_, err := s.ExecutionManager.UpdateWorkflowExecution(s.Ctx, &p.UpdateWorkflowExecutionRequest{
+			ShardID: s.ShardID,
+			RangeID: s.RangeID,
+			Mode:    p.UpdateWorkflowModeUpdateCurrent,
 
-// 			UpdateWorkflowMutation: *currentMutation,
-// 			UpdateWorkflowEvents:   currentEvents,
+			UpdateWorkflowMutation: *currentMutation,
+			UpdateWorkflowEvents:   currentEvents,
 
-// 			NewWorkflowSnapshot: nil,
-// 			NewWorkflowEvents:   nil,
-// 		})
-// 		s.NoError(err)
+			NewWorkflowSnapshot: nil,
+			NewWorkflowEvents:   nil,
+		})
+		s.NoError(err)
 
-// 		currentMutation2, currentEvents2 := RandomMutation(
-// 			s.T(),
-// 			s.NamespaceID,
-// 			s.WorkflowID,
-// 			s.RunID,
-// 			currentMutation.NextEventID,
-// 			rand.Int63(),
-// 			enumsspb.WORKFLOW_EXECUTION_STATE_RUNNING,
-// 			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
-// 			currentMutation.DBRecordVersion+1,
-// 			branchToken,
-// 		)
-// 		currentMutation2.NewBufferedEvents = nil
-// 		currentMutation2.ClearBufferedEvents = true
+		currentMutation2, currentEvents2 := RandomMutation(
+			s.T(),
+			s.NamespaceID,
+			s.WorkflowID,
+			s.RunID,
+			currentMutation.NextEventID,
+			rand.Int63(),
+			enumsspb.WORKFLOW_EXECUTION_STATE_RUNNING,
+			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
+			currentMutation.DBRecordVersion+1,
+			branchToken,
+		)
+		currentMutation2.NewBufferedEvents = nil
+		currentMutation2.BufferedEventsToClear = map[int64]struct{}{2: {}}
 
-// 		_, err = s.ExecutionManager.UpdateWorkflowExecution(s.Ctx, &p.UpdateWorkflowExecutionRequest{
-// 			ShardID: s.ShardID,
-// 			RangeID: s.RangeID,
-// 			Mode:    p.UpdateWorkflowModeUpdateCurrent,
+		_, err = s.ExecutionManager.UpdateWorkflowExecution(s.Ctx, &p.UpdateWorkflowExecutionRequest{
+			ShardID: s.ShardID,
+			RangeID: s.RangeID,
+			Mode:    p.UpdateWorkflowModeUpdateCurrent,
 
-// 			UpdateWorkflowMutation: *currentMutation2,
-// 			UpdateWorkflowEvents:   currentEvents2,
+			UpdateWorkflowMutation: *currentMutation2,
+			UpdateWorkflowEvents:   currentEvents2,
 
-// 			NewWorkflowSnapshot: nil,
-// 			NewWorkflowEvents:   nil,
-// 		})
-// 		s.NoError(err)
+			NewWorkflowSnapshot: nil,
+			NewWorkflowEvents:   nil,
+		})
+		s.NoError(err)
 
-// 		s.AssertMSEqualWithDB(newSnapshot, currentMutation, currentMutation2)
-// 		// s.AssertHEEqualWithDB(branchToken, newEvents, currentEvents)
+		s.AssertMSEqualWithDB(newSnapshot, currentMutation, currentMutation2)
+		// s.AssertHEEqualWithDB(branchToken, newEvents, currentEvents)
 
-// 	}
-// }
+	}
+}
 
 func (s *ExecutionMutableStateSuite) TestUpdate_NotZombie() {
 	branchToken, newSnapshot, newEvents := s.CreateWorkflow(
@@ -2173,10 +2175,12 @@ func (s *ExecutionMutableStateSuite) Accumulate(
 		mutableState.SignalRequestedIds = convert.StringSetToSlice(signalRequestIDs)
 
 		// buffered events
-		if mutation.ClearBufferedEvents {
+		if len(mutation.BufferedEventsToClear) != 0 {
 			mutableState.BufferedEvents = nil
 		} else if mutation.NewBufferedEvents != nil {
-			mutableState.BufferedEvents = append(mutableState.BufferedEvents, mutation.NewBufferedEvents...)
+			for _, event := range mutation.NewBufferedEvents {
+				mutableState.BufferedEvents = append(mutableState.BufferedEvents, event)
+			}
 		}
 	}
 

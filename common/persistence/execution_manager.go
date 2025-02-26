@@ -515,11 +515,11 @@ func (m *executionManagerImpl) DeserializeBufferedEvents( // unexport
 			continue
 		}
 
-		history, err := m.serializer.DeserializeEvents(b)
+		event, err := m.serializer.DeserializeEvent(b)
 		if err != nil {
 			return nil, err
 		}
-		events = append(events, history...)
+		events = append(events, event)
 	}
 	return events, nil
 }
@@ -580,8 +580,8 @@ func (m *executionManagerImpl) SerializeWorkflowMutation( // unexport
 		UpsertSignalRequestedIDs: input.UpsertSignalRequestedIDs,
 		DeleteSignalRequestedIDs: input.DeleteSignalRequestedIDs,
 
-		NewBufferedEvents:   nil,
-		ClearBufferedEvents: input.ClearBufferedEvents,
+		NewBufferedEvents:     make(map[int64]*commonpb.DataBlob, len(input.NewBufferedEvents)),
+		BufferedEventsToClear: input.BufferedEventsToClear,
 
 		ExecutionInfo:  input.ExecutionInfo,
 		ExecutionState: input.ExecutionState,
@@ -642,11 +642,12 @@ func (m *executionManagerImpl) SerializeWorkflowMutation( // unexport
 		result.UpsertSignalInfos[key] = blob
 	}
 
-	if len(input.NewBufferedEvents) > 0 {
-		result.NewBufferedEvents, err = m.serializer.SerializeEvents(input.NewBufferedEvents, enumspb.ENCODING_TYPE_PROTO3)
+	for key, event := range input.NewBufferedEvents {
+		blob, err := m.serializer.SerializeEvent(event, enumspb.ENCODING_TYPE_PROTO3)
 		if err != nil {
 			return nil, err
 		}
+		result.NewBufferedEvents[key] = blob
 	}
 
 	result.LastWriteVersion, err = getCurrentBranchLastWriteVersion(input.ExecutionInfo.VersionHistories)

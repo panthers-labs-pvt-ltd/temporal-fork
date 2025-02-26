@@ -140,7 +140,7 @@ func applyWorkflowMutationBatch(
 	updateBufferedEvents(
 		batch,
 		workflowMutation.NewBufferedEvents,
-		workflowMutation.ClearBufferedEvents,
+		workflowMutation.BufferedEventsToClear,
 		shardID,
 		namespaceID,
 		workflowID,
@@ -1007,8 +1007,8 @@ func resetSignalRequested(
 
 func updateBufferedEvents(
 	batch *gocql.Batch,
-	newBufferedEvents *commonpb.DataBlob,
-	clearBufferedEvents bool,
+	newBufferedEvents map[int64]*commonpb.DataBlob,
+	bufferedEventsToClear map[int64]struct{},
 	shardID int32,
 	namespaceID string,
 	workflowID string,
@@ -1016,9 +1016,10 @@ func updateBufferedEvents(
 	logger log.Logger,
 ) {
 
-	if clearBufferedEvents {
-		logger.Info("Clearing buffered events", tag.WorkflowNamespaceID(namespaceID), tag.WorkflowID(workflowID), tag.WorkflowRunID(runID))
-		batch.Query(templateDeleteBufferedEventsQuery,
+	for id := range bufferedEventsToClear {
+		// logger.Info("Clearing buffered events by ID", tag.WorkflowNamespaceID(namespaceID), tag.WorkflowID(workflowID), tag.WorkflowRunID(runID))
+		batch.Query(templateDeleteBufferedEventsByIDQuery,
+			id,
 			shardID,
 			rowTypeExecution,
 			namespaceID,
@@ -1026,14 +1027,12 @@ func updateBufferedEvents(
 			runID,
 			defaultVisibilityTimestamp,
 			rowTypeExecutionTaskID)
-	} else if newBufferedEvents != nil {
-		values := make(map[string]interface{})
-		values["encoding_type"] = newBufferedEvents.EncodingType.String()
-		values["version"] = int64(0)
-		values["data"] = newBufferedEvents.Data
-		newEventValues := []map[string]interface{}{values}
+	}
+
+	for id, event := range newBufferedEvents {
 		batch.Query(templateAppendBufferedEventsQuery,
-			newEventValues,
+			id,
+			event.Data,
 			shardID,
 			rowTypeExecution,
 			namespaceID,

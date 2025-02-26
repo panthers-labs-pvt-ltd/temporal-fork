@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
+	historypb "go.temporal.io/api/history/v1"
 	taskqueuepb "go.temporal.io/api/taskqueue/v1"
 	"go.temporal.io/api/temporalproto"
 	"go.temporal.io/api/workflowservice/v1"
@@ -765,8 +766,8 @@ func (s *timerQueueStandbyTaskExecutorSuite) TestProcessActivityTimeout_Multiple
 					DeleteSignalInfos:         map[int64]struct{}{},
 					UpsertSignalRequestedIDs:  map[string]struct{}{},
 					DeleteSignalRequestedIDs:  map[string]struct{}{},
-					NewBufferedEvents:         nil,
-					ClearBufferedEvents:       false,
+					NewBufferedEvents:         map[int64]*historypb.HistoryEvent{},
+					BufferedEventsToClear:     map[int64]struct{}{},
 				},
 				UpdateWorkflowEvents: []*persistence.WorkflowEvents{},
 			}, input))

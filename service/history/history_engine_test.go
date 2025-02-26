@@ -4863,7 +4863,7 @@ func (s *engineSuite) TestCancelTimer_RespondWorkflowTaskCompleted_TimerFired() 
 	s.mockExecutionMgr.EXPECT().GetWorkflowExecution(gomock.Any(), gomock.Any()).Return(gwmsResponse, nil)
 	s.mockExecutionMgr.EXPECT().UpdateWorkflowExecution(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, request *persistence.UpdateWorkflowExecutionRequest) (*persistence.UpdateWorkflowExecutionResponse, error) {
-			s.True(request.UpdateWorkflowMutation.ClearBufferedEvents)
+			s.NotEmpty(request.UpdateWorkflowMutation.BufferedEventsToClear)
 			return tests.UpdateWorkflowExecutionResponse, nil
 		})
 

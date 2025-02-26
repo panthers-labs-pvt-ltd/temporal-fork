@@ -463,8 +463,8 @@ type (
 		DeleteSignalInfos         map[int64]struct{}            `json:",omitempty"`
 		UpsertSignalRequestedIDs  map[string]struct{}           `json:",omitempty"`
 		DeleteSignalRequestedIDs  map[string]struct{}           `json:",omitempty"`
-		NewBufferedEvents         *commonpb.DataBlob
-		ClearBufferedEvents       bool
+		NewBufferedEvents         map[int64]*commonpb.DataBlob  // each event is a blob
+		BufferedEventsToClear     map[int64]struct{}
 
 		Tasks map[tasks.Category][]InternalHistoryTask `json:",omitempty"`
 

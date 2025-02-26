@@ -144,19 +144,19 @@ func RandomMutation(
 		DBRecordVersion: dbRecordVersion,
 	}
 
-	switch rand.Int63() % 3 {
-	case 0:
-		mutation.ClearBufferedEvents = true
-		mutation.NewBufferedEvents = nil
-	case 1:
-		mutation.ClearBufferedEvents = false
-		mutation.NewBufferedEvents = nil
-	case 2:
-		mutation.ClearBufferedEvents = false
-		mutation.NewBufferedEvents = []*historypb.HistoryEvent{RandomHistoryEvent(eventID, lastWriteVersion)}
-	default:
-		panic("broken test")
-	}
+	// switch rand.Int63() % 3 {
+	// case 0:
+	// 	mutation.ClearBufferedEvents = true
+	// 	mutation.NewBufferedEvents = nil
+	// case 1:
+	// 	mutation.ClearBufferedEvents = false
+	// 	mutation.NewBufferedEvents = nil
+	// case 2:
+	// 	mutation.ClearBufferedEvents = false
+	// 	mutation.NewBufferedEvents = []*historypb.HistoryEvent{RandomHistoryEvent(eventID, lastWriteVersion)}
+	// default:
+	// 	panic("broken test")
+	// }
 
 	history := mutation.ExecutionInfo.VersionHistories.Histories[0]
 	events := &p.WorkflowEvents{

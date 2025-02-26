@@ -38,7 +38,7 @@ CREATE TABLE executions (
   signal_map                     map<bigint, blob>,
   signal_map_encoding            text,
   signal_requested               set<uuid>,
-  buffered_events_list           list<frozen<serialized_event_batch>>,
+  buffered_events_map            map<bigint, blob>,
   replication_metadata           blob, -- Contains versions for replicationState
   replication_metadata_encoding  text,
   workflow_last_write_version    bigint,

@@ -174,7 +174,7 @@ func applyWorkflowMutationTx(
 		return serviceerror.NewUnavailable(fmt.Sprintf("applyWorkflowMutationTx failed. Error: %v", err))
 	}
 
-	if workflowMutation.ClearBufferedEvents {
+	if len(workflowMutation.BufferedEventsToClear) != 0 {
 		if err := deleteBufferedEvents(ctx,
 			tx,
 			shardID,
@@ -186,16 +186,19 @@ func applyWorkflowMutationTx(
 		}
 	}
 
-	if err := updateBufferedEvents(ctx,
-		tx,
-		workflowMutation.NewBufferedEvents,
-		shardID,
-		namespaceIDBytes,
-		workflowID,
-		runIDBytes,
-	); err != nil {
-		return serviceerror.NewUnavailable(fmt.Sprintf("applyWorkflowMutationTx failed. Error: %v", err))
+	for _, blob := range workflowMutation.NewBufferedEvents {
+		if err := updateBufferedEvents(ctx,
+			tx,
+			blob,
+			shardID,
+			namespaceIDBytes,
+			workflowID,
+			runIDBytes,
+		); err != nil {
+			return serviceerror.NewUnavailable(fmt.Sprintf("applyWorkflowMutationTx failed. Error: %v", err))
+		}
 	}
+
 	return nil
 }
 

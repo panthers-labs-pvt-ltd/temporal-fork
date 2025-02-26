@@ -170,11 +170,10 @@ func statusOfInternalWorkflowMutation(
 	totalUpdateCount := mutation.ExecutionInfo.UpdateCount
 	updateInfoCount := len(mutation.ExecutionInfo.UpdateInfos)
 
-	bufferedEventsCount := 0
+	bufferedEventsCount := len(mutation.NewBufferedEvents)
 	bufferedEventsSize := 0
-	if mutation.NewBufferedEvents != nil {
-		bufferedEventsCount = 1
-		bufferedEventsSize = mutation.NewBufferedEvents.Size()
+	for _, event := range mutation.NewBufferedEvents {
+		bufferedEventsSize += sizeOfBlob(event)
 	}
 
 	taskCountByCategory := taskCountsByCategory(&mutation.Tasks)

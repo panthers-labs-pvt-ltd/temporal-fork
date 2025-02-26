@@ -359,8 +359,8 @@ type (
 		DeleteSignalInfos         map[int64]struct{}
 		UpsertSignalRequestedIDs  map[string]struct{}
 		DeleteSignalRequestedIDs  map[string]struct{}
-		NewBufferedEvents         []*historypb.HistoryEvent
-		ClearBufferedEvents       bool
+		NewBufferedEvents         map[int64]*historypb.HistoryEvent
+		BufferedEventsToClear     map[int64]struct{}
 
 		Tasks map[tasks.Category][]tasks.Task
 
