@@ -1296,7 +1296,7 @@ second per poller by one physical queue manager`,
 	)
 	MatchingUseNewMatcher = NewTaskQueueBoolSetting(
 		"matching.useNewMatcher",
-		false,
+		true,
 		`Use priority-enabled TaskMatcher`,
 	)
 	MatchingPriorityLevels = NewTaskQueueIntSetting(
