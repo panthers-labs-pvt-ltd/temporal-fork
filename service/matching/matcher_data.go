@@ -519,7 +519,7 @@ func (d *matcherData) rematchAfterTimer() {
 	d.findAndWakeMatches()
 }
 
-func (d *matcherData) finishMatchAfterPollForward(poller *waitingPoller, task *internalTask) {
+func (d *matcherData) FinishMatchAfterPollForward(poller *waitingPoller, task *internalTask) {
 	d.lock.Lock()
 	defer d.lock.Unlock()
 

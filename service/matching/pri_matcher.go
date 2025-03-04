@@ -280,7 +280,7 @@ func (tm *priTaskMatcher) forwardPolls() {
 		// identity, plus the right deadline.
 		task, err := tm.fwdr.ForwardPoll(poller.forwardCtx, poller.pollMetadata)
 		if err == nil {
-			tm.data.finishMatchAfterPollForward(poller, task)
+			tm.data.FinishMatchAfterPollForward(poller, task)
 		} else {
 			// Re-enqueue to let it match again, if it hasn't gotten a context timeout already.
 			poller.forwardCtx = nil // disable forwarding next time

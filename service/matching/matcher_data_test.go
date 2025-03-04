@@ -32,6 +32,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	persistencespb "go.temporal.io/server/api/persistence/v1"
 	taskqueuespb "go.temporal.io/server/api/taskqueue/v1"
@@ -40,17 +41,6 @@ import (
 	"go.temporal.io/server/common/tqid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
-
-/*
-match task + task fwdr
-
-match task to poller over task fwdr
-
-don't match with fwdr if not allow forwarding
-
-put in a bunch of tasks and reprocess them
-
-*/
 
 type MatcherDataSuite struct {
 	suite.Suite
@@ -78,6 +68,26 @@ func (s *MatcherDataSuite) now() time.Time {
 	return s.ts.Now()
 }
 
+func (s *MatcherDataSuite) pollRealTime(timeout time.Duration) *matchResult {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return s.pollContext(ctx)
+}
+
+func (s *MatcherDataSuite) pollFakeTime(timeout time.Duration) *matchResult {
+	ctx, cancel := clock.ContextWithTimeout(context.Background(), timeout, s.ts)
+	defer cancel()
+	return s.pollContext(ctx)
+}
+
+func (s *MatcherDataSuite) pollContext(ctx context.Context) *matchResult {
+	return s.md.EnqueuePollerAndWait([]context.Context{ctx}, &waitingPoller{
+		startTime:    s.now(),
+		forwardCtx:   ctx,
+		pollMetadata: &pollMetadata{},
+	})
+}
+
 func (s *MatcherDataSuite) newSyncTask(fwdInfo *taskqueuespb.TaskForwardInfo) *internalTask {
 	t := &persistencespb.TaskInfo{
 		CreateTime: timestamppb.New(s.now()),
@@ -86,13 +96,34 @@ func (s *MatcherDataSuite) newSyncTask(fwdInfo *taskqueuespb.TaskForwardInfo) *i
 }
 
 func (s *MatcherDataSuite) newBacklogTask(id int64, age time.Duration, f func(*internalTask, taskResponse)) *internalTask {
+	return s.newBacklogTaskWithPriority(id, age, f, nil)
+}
+
+func (s *MatcherDataSuite) newBacklogTaskWithPriority(id int64, age time.Duration, f func(*internalTask, taskResponse), pri *commonpb.Priority) *internalTask {
 	t := &persistencespb.AllocatedTaskInfo{
 		Data: &persistencespb.TaskInfo{
 			CreateTime: timestamppb.New(s.now().Add(-age)),
+			Priority:   pri,
 		},
 		TaskId: id,
 	}
 	return newInternalTaskFromBacklog(t, f)
+}
+
+func (s *MatcherDataSuite) waitForPollers(n int) {
+	s.Eventually(func() bool {
+		s.md.lock.Lock()
+		defer s.md.lock.Unlock()
+		return s.md.pollers.Len() >= n
+	}, time.Second, time.Millisecond)
+}
+
+func (s *MatcherDataSuite) waitForTasks(n int) {
+	s.Eventually(func() bool {
+		s.md.lock.Lock()
+		defer s.md.lock.Unlock()
+		return s.md.tasks.Len() >= n
+	}, time.Second, time.Millisecond)
 }
 
 func (s *MatcherDataSuite) TestMatchBacklogTask() {
@@ -149,11 +180,7 @@ func (s *MatcherDataSuite) TestMatchTaskImmediately() {
 	}()
 
 	// wait until poller queued
-	s.Eventually(func() bool {
-		s.md.lock.Lock()
-		defer s.md.lock.Unlock()
-		return s.md.pollers.Len() > 0
-	}, time.Second, time.Millisecond)
+	s.waitForPollers(1)
 
 	// should match this time
 	canSyncMatch, gotSyncMatch = s.md.MatchTaskImmediately(t)
@@ -195,11 +222,7 @@ func (s *MatcherDataSuite) TestRateLimitedBacklog() {
 		go func() {
 			defer running.Add(-1)
 			for {
-				poller := &waitingPoller{startTime: s.now()}
-				ctx, cancel := clock.ContextWithTimeout(context.Background(), time.Second, s.ts)
-				pres := s.md.EnqueuePollerAndWait([]context.Context{ctx}, poller)
-				cancel()
-				if pres.ctxErr != nil {
+				if pres := s.pollFakeTime(time.Second); pres.ctxErr != nil {
 					return
 				}
 				lastTask.Store(s.now().UnixNano())
@@ -219,6 +242,94 @@ func (s *MatcherDataSuite) TestRateLimitedBacklog() {
 	s.Greater(elapsed, 9*time.Second)
 	// with very unlucky scheduling, we might end up taking longer to poll the tasks
 	s.Less(elapsed, 20*time.Second)
+}
+
+func (s *MatcherDataSuite) TestOrder() {
+	t1 := s.newBacklogTaskWithPriority(1, 0, nil, &commonpb.Priority{PriorityKey: 1})
+	t2 := s.newBacklogTaskWithPriority(2, 0, nil, &commonpb.Priority{PriorityKey: 2})
+	t3 := s.newBacklogTaskWithPriority(3, 0, nil, &commonpb.Priority{PriorityKey: 3})
+	tf := &internalTask{isPollForwarder: true}
+
+	s.md.EnqueueTaskNoWait(t3)
+	s.md.EnqueueTaskNoWait(tf)
+	s.md.EnqueueTaskNoWait(t1)
+	s.md.EnqueueTaskNoWait(t2)
+
+	s.Equal(t1, s.pollFakeTime(time.Second).task)
+	s.Equal(t2, s.pollFakeTime(time.Second).task)
+	s.Equal(t3, s.pollFakeTime(time.Second).task)
+	// poll forwarder is last to match, but it does a half-match so we won't see it here
+}
+
+func (s *MatcherDataSuite) TestPollForwardSuccess() {
+	t1 := s.newBacklogTask(1, 0, nil)
+	t2 := s.newBacklogTask(2, 0, nil)
+
+	s.md.EnqueueTaskNoWait(t1)
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		tres := s.md.EnqueueTaskAndWait([]context.Context{ctx}, &internalTask{isPollForwarder: true})
+		// task is woken up with poller to forward
+		s.NotNil(tres.poller)
+		// forward succeeded, pass back task
+		s.md.FinishMatchAfterPollForward(tres.poller, t2)
+	}()
+
+	s.waitForTasks(2)
+
+	s.Equal(t1, s.pollFakeTime(time.Second).task)
+	s.Equal(t2, s.pollFakeTime(time.Second).task)
+}
+
+func (s *MatcherDataSuite) TestPollForwardFailed() {
+	t1 := s.newBacklogTask(1, 0, nil)
+	t2 := s.newBacklogTask(2, 0, nil)
+
+	s.md.EnqueueTaskNoWait(t1)
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		tres := s.md.EnqueueTaskAndWait([]context.Context{ctx}, &internalTask{isPollForwarder: true})
+		// task is woken up with poller to forward
+		s.NotNil(tres.poller)
+		// there's a new task in the meantime
+		s.md.EnqueueTaskNoWait(t2)
+		// forward failed, re-enqueue poller so it can match again
+		s.md.ReenqueuePollerIfNotMatched(tres.poller)
+	}()
+
+	s.waitForTasks(2)
+
+	s.Equal(t1, s.pollFakeTime(time.Second).task)
+	s.Equal(t2, s.pollFakeTime(time.Second).task)
+}
+
+func (s *MatcherDataSuite) TestPollForwardFailedTimedOut() {
+	t1 := s.newBacklogTask(1, 0, nil)
+	t2 := s.newBacklogTask(2, 0, nil)
+
+	s.md.EnqueueTaskNoWait(t1)
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		tres := s.md.EnqueueTaskAndWait([]context.Context{ctx}, &internalTask{isPollForwarder: true})
+		// task is woken up with poller to forward
+		s.NotNil(tres.poller)
+		// there's a new task in the meantime
+		s.md.EnqueueTaskNoWait(t2)
+		time.Sleep(11 * time.Millisecond)
+		// but we waited too long, poller timed out, so this does nothing (but doesn't crash or assert)
+		s.md.ReenqueuePollerIfNotMatched(tres.poller)
+	}()
+
+	s.waitForTasks(2)
+
+	s.Equal(t1, s.pollRealTime(10*time.Millisecond).task)
+	s.Error(s.pollRealTime(10 * time.Millisecond).ctxErr)
 }
 
 // simple limiter tests
