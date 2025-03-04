@@ -24,6 +24,7 @@ package matching
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"runtime"
 	"sync/atomic"
@@ -34,10 +35,12 @@ import (
 	"github.com/stretchr/testify/suite"
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/server/api/matchingservice/v1"
 	persistencespb "go.temporal.io/server/api/persistence/v1"
 	taskqueuespb "go.temporal.io/server/api/taskqueue/v1"
 	"go.temporal.io/server/common/clock"
 	"go.temporal.io/server/common/dynamicconfig"
+	"go.temporal.io/server/common/payloads"
 	"go.temporal.io/server/common/tqid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -88,11 +91,27 @@ func (s *MatcherDataSuite) pollContext(ctx context.Context) *matchResult {
 	})
 }
 
+func (s *MatcherDataSuite) queryFakeTime(duration time.Duration, respC chan<- taskResponse) {
+	ctx, cancel := clock.ContextWithTimeout(context.Background(), duration, s.ts)
+	defer cancel()
+	t := s.newQueryTask("1")
+	tres := s.md.EnqueueTaskAndWait([]context.Context{ctx}, t)
+	s.NoError(tres.ctxErr)
+
+	resp, ok := t.getResponse()
+	s.True(ok)
+	respC <- resp
+}
+
 func (s *MatcherDataSuite) newSyncTask(fwdInfo *taskqueuespb.TaskForwardInfo) *internalTask {
 	t := &persistencespb.TaskInfo{
 		CreateTime: timestamppb.New(s.now()),
 	}
 	return newInternalTaskForSyncMatch(t, fwdInfo)
+}
+
+func (s *MatcherDataSuite) newQueryTask(id string) *internalTask {
+	return newInternalQueryTask(id, &matchingservice.QueryWorkflowRequest{})
 }
 
 func (s *MatcherDataSuite) newBacklogTask(id int64, age time.Duration, f func(*internalTask, taskResponse)) *internalTask {
@@ -201,6 +220,73 @@ func (s *MatcherDataSuite) TestMatchTaskImmediatelyDisabledBacklog() {
 	canSyncMatch, gotSyncMatch := s.md.MatchTaskImmediately(t)
 	s.False(canSyncMatch)
 	s.False(gotSyncMatch)
+}
+
+func (s *MatcherDataSuite) TestQuery() {
+	respC := make(chan taskResponse)
+	go s.queryFakeTime(time.Second, respC)
+
+	pres := s.pollFakeTime(time.Second)
+	s.NotNil(pres.task)
+	s.True(pres.task.isQuery())
+	// wake up getResponse. use some error just to check it's passed through.
+	someError := errors.New("some error")
+	pres.task.finish(someError, true)
+
+	resp := <-respC
+	s.False(resp.forwarded)
+	s.ErrorIs(resp.startErr, someError)
+}
+
+func (s *MatcherDataSuite) TestQueryForwardNil() {
+	respC := make(chan taskResponse)
+	go s.queryFakeTime(time.Second, respC)
+
+	pres := s.pollFakeTime(time.Second)
+	s.NotNil(pres.task)
+	s.True(pres.task.isQuery())
+	var fres *matchingservice.QueryWorkflowResponse
+	pres.task.finishForward(fres, nil, true)
+
+	resp := <-respC
+	s.True(resp.forwarded)
+	s.NoError(resp.forwardErr)
+	s.True(resp.forwardRes != nil) // typed nil
+	s.Nil(resp.forwardRes.(*matchingservice.QueryWorkflowResponse))
+}
+
+func (s *MatcherDataSuite) TestQueryForwardError() {
+	respC := make(chan taskResponse)
+	go s.queryFakeTime(time.Second, respC)
+
+	pres := s.pollFakeTime(time.Second)
+	s.NotNil(pres.task)
+	s.True(pres.task.isQuery())
+	var fres *matchingservice.QueryWorkflowResponse
+	someError := errors.New("some error")
+	pres.task.finishForward(fres, someError, true)
+
+	resp := <-respC
+	s.True(resp.forwarded)
+	s.ErrorIs(resp.forwardErr, someError)
+}
+
+func (s *MatcherDataSuite) TestQueryForwardResponse() {
+	respC := make(chan taskResponse)
+	go s.queryFakeTime(time.Second, respC)
+
+	pres := s.pollFakeTime(time.Second)
+	s.NotNil(pres.task)
+	s.True(pres.task.isQuery())
+	fres := &matchingservice.QueryWorkflowResponse{
+		QueryResult: payloads.EncodeString("ok"),
+	}
+	pres.task.finishForward(fres, nil, true)
+
+	resp := <-respC
+	s.True(resp.forwarded)
+	s.NoError(resp.forwardErr)
+	s.Contains(payloads.ToString(resp.forwardRes.(*matchingservice.QueryWorkflowResponse).QueryResult), "ok")
 }
 
 func (s *MatcherDataSuite) TestRateLimitedBacklog() {
