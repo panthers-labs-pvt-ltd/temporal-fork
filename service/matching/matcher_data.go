@@ -50,10 +50,10 @@ func (p *pollerPQ) Less(i int, j int) bool {
 	a, b := p.heap[i], p.heap[j]
 	if !(a.isTaskForwarder || a.isTaskValidator) && (b.isTaskForwarder || b.isTaskValidator) {
 		return true
-	} else if a.startTime.Before(b.startTime) {
-		return true
+	} else if (a.isTaskForwarder || a.isTaskValidator) && !(b.isTaskForwarder || b.isTaskValidator) {
+		return false
 	}
-	return false
+	return a.startTime.Before(b.startTime)
 }
 
 func (p *pollerPQ) Add(poller *waitingPoller) {

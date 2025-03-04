@@ -289,6 +289,45 @@ func (s *MatcherDataSuite) TestQueryForwardResponse() {
 	s.Contains(payloads.ToString(resp.forwardRes.(*matchingservice.QueryWorkflowResponse).QueryResult), "ok")
 }
 
+func (s *MatcherDataSuite) TestTaskForward() {
+	someError := errors.New("some error")
+	// one task forwarder
+	go func() {
+		poller := &waitingPoller{isTaskForwarder: true}
+		pres := s.md.EnqueuePollerAndWait(nil, poller)
+		s.NotNil(pres.task)
+		// use some error just to check it's passed through
+		pres.task.finishForward(nil, someError, true)
+	}()
+	// two normal pollers
+	go s.pollFakeTime(time.Second)
+	go s.pollFakeTime(time.Second)
+
+	s.waitForPollers(3)
+
+	t1 := s.newSyncTask(nil)
+	t2 := s.newSyncTask(nil)
+	t3 := s.newSyncTask(nil)
+
+	// two tasks will get matched with normal pollers first
+	tres := s.md.EnqueueTaskAndWait(nil, t1)
+	s.NotNil(tres.poller)
+	s.False(tres.poller.isTaskForwarder)
+
+	tres = s.md.EnqueueTaskAndWait(nil, t2)
+	s.NotNil(tres.poller)
+	s.False(tres.poller.isTaskForwarder)
+
+	// third task will get matched with forwarder
+	tres = s.md.EnqueueTaskAndWait(nil, t3)
+	s.NotNil(tres.poller)
+	s.True(tres.poller.isTaskForwarder)
+	fres, ok := t3.getResponse()
+	s.True(ok)
+	s.True(fres.forwarded)
+	s.ErrorIs(fres.forwardErr, someError)
+}
+
 func (s *MatcherDataSuite) TestRateLimitedBacklog() {
 	// 10 tasks/sec with burst of 3
 	s.md.UpdateRateLimit(10, 300*time.Millisecond)
