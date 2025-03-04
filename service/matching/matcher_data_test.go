@@ -25,6 +25,8 @@ package matching
 import (
 	"context"
 	"math/rand"
+	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,8 +46,6 @@ match task + task fwdr
 
 match task to poller over task fwdr
 
-match task rate limited
-
 don't match with fwdr if not allow forwarding
 
 put in a bunch of tasks and reprocess them
@@ -54,6 +54,7 @@ put in a bunch of tasks and reprocess them
 
 type MatcherDataSuite struct {
 	suite.Suite
+	ts *clock.EventTimeSource
 	md matcherData
 }
 
@@ -68,11 +69,13 @@ func (s *MatcherDataSuite) SetupTest() {
 		NewConfig(dynamicconfig.NewNoopCollection()),
 		"nsname",
 	)
-	s.md = newMatcherData(cfg, true, clock.NewEventTimeSource())
+	s.ts = clock.NewEventTimeSource().Update(time.Now())
+	s.ts.UseAsyncTimers(true)
+	s.md = newMatcherData(cfg, true, s.ts)
 }
 
 func (s *MatcherDataSuite) now() time.Time {
-	return s.md.timeSource.Now()
+	return s.ts.Now()
 }
 
 func (s *MatcherDataSuite) newSyncTask(fwdInfo *taskqueuespb.TaskForwardInfo) *internalTask {
@@ -171,6 +174,51 @@ func (s *MatcherDataSuite) TestMatchTaskImmediatelyDisabledBacklog() {
 	canSyncMatch, gotSyncMatch := s.md.MatchTaskImmediately(t)
 	s.False(canSyncMatch)
 	s.False(gotSyncMatch)
+}
+
+func (s *MatcherDataSuite) TestRateLimitedBacklog() {
+	// 10 tasks/sec with burst of 3
+	s.md.UpdateRateLimit(10, 300*time.Millisecond)
+
+	// register some backlog with old tasks
+	for i := range 100 {
+		s.md.EnqueueTaskNoWait(s.newBacklogTask(123+int64(i), 0, nil))
+	}
+
+	start := s.ts.Now()
+
+	// start 10 poll loops to poll them
+	var running atomic.Int64
+	var lastTask atomic.Int64
+	for range 10 {
+		running.Add(1)
+		go func() {
+			defer running.Add(-1)
+			for {
+				poller := &waitingPoller{startTime: s.now()}
+				ctx, cancel := clock.ContextWithTimeout(context.Background(), time.Second, s.ts)
+				pres := s.md.EnqueuePollerAndWait([]context.Context{ctx}, poller)
+				cancel()
+				if pres.ctxErr != nil {
+					return
+				}
+				lastTask.Store(s.now().UnixNano())
+			}
+		}()
+	}
+
+	// advance fake time until done
+	for running.Load() > 0 {
+		s.ts.Advance(time.Duration(rand.Int63n(int64(10 * time.Millisecond))))
+		runtime.Gosched()
+		runtime.Gosched()
+		runtime.Gosched()
+	}
+
+	elapsed := time.Unix(0, lastTask.Load()).Sub(start)
+	s.Greater(elapsed, 9*time.Second)
+	// with very unlucky scheduling, we might end up taking longer to poll the tasks
+	s.Less(elapsed, 20*time.Second)
 }
 
 // simple limiter tests
