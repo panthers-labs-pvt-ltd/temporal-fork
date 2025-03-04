@@ -23,12 +23,118 @@
 package matching
 
 import (
+	"context"
 	"math/rand"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+	enumspb "go.temporal.io/api/enums/v1"
+	persistencespb "go.temporal.io/server/api/persistence/v1"
+	taskqueuespb "go.temporal.io/server/api/taskqueue/v1"
+	"go.temporal.io/server/common/clock"
+	"go.temporal.io/server/common/dynamicconfig"
+	"go.temporal.io/server/common/tqid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+/*
+match task + task fwdr
+
+match task to poller over task fwdr
+
+match task rate limited
+
+don't match with fwdr if not allow forwarding
+
+put in a bunch of tasks and reprocess them
+
+context timeouts
+
+
+
+*/
+
+type MatcherDataSuite struct {
+	suite.Suite
+	md matcherData
+}
+
+func TestMatcherDataSuite(t *testing.T) {
+	t.Parallel()
+	suite.Run(t, new(MatcherDataSuite))
+}
+
+func (s *MatcherDataSuite) SetupTest() {
+	cfg := newTaskQueueConfig(
+		tqid.UnsafeTaskQueueFamily("nsid", "tq").TaskQueue(enumspb.TASK_QUEUE_TYPE_ACTIVITY),
+		NewConfig(dynamicconfig.NewNoopCollection()),
+		"nsname",
+	)
+	s.md = newMatcherData(cfg, true, clock.NewEventTimeSource())
+}
+
+func (s *MatcherDataSuite) now() time.Time {
+	return s.md.timeSource.Now()
+}
+
+func (s *MatcherDataSuite) newSyncTask(fwdInfo *taskqueuespb.TaskForwardInfo) *internalTask {
+	t := &persistencespb.TaskInfo{
+		CreateTime: timestamppb.New(s.now()),
+	}
+	return newInternalTaskForSyncMatch(t, fwdInfo)
+}
+
+func (s *MatcherDataSuite) newBacklogTask(id int64, f func(*internalTask, taskResponse)) *internalTask {
+	t := &persistencespb.AllocatedTaskInfo{
+		Data: &persistencespb.TaskInfo{
+			CreateTime: timestamppb.New(s.now()),
+		},
+		TaskId: id,
+	}
+	return newInternalTaskFromBacklog(t, f)
+}
+
+func (s *MatcherDataSuite) TestMatchBacklogTask() {
+	poller := &waitingPoller{startTime: s.now()}
+
+	// no task yet, context should time out
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	pres := s.md.EnqueuePollerAndWait([]context.Context{ctx}, poller)
+	s.Error(context.DeadlineExceeded, pres.ctxErr)
+	s.Equal(0, pres.ctxErrIdx)
+
+	// add a task
+	gotResponse := false
+	done := func(t *internalTask, tres taskResponse) {
+		gotResponse = true
+		s.NoError(tres.startErr)
+	}
+	t := s.newBacklogTask(123, done)
+	s.md.EnqueueTaskNoWait(t)
+
+	// now should match with task
+	ctx, cancel = context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	pres = s.md.EnqueuePollerAndWait([]context.Context{ctx}, poller)
+	s.NoError(pres.ctxErr)
+	s.Equal(t, pres.task)
+
+	// finish task
+	pres.task.finish(nil, true)
+	s.True(gotResponse)
+
+	// one more, context should time out again. note two contexts this time.
+	ctx, cancel = context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	pres = s.md.EnqueuePollerAndWait([]context.Context{context.Background(), ctx}, poller)
+	s.Error(context.DeadlineExceeded, pres.ctxErr)
+	s.Equal(1, pres.ctxErrIdx, "deadline context was index 1")
+}
+
+// simple limiter tests
 
 func TestSimpleLimiter(t *testing.T) {
 	var sl simpleLimiter
