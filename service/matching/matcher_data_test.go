@@ -358,9 +358,7 @@ func (s *MatcherDataSuite) TestRateLimitedBacklog() {
 	// advance fake time until done
 	for running.Load() > 0 {
 		s.ts.Advance(time.Duration(rand.Int63n(int64(10 * time.Millisecond))))
-		runtime.Gosched()
-		runtime.Gosched()
-		runtime.Gosched()
+		gosched(3)
 	}
 
 	elapsed := time.Unix(0, lastTask.Load()).Sub(start)
@@ -536,4 +534,137 @@ func TestSimpleLimiterRecycle(t *testing.T) {
 
 	effectiveRate := float64(consumed) / float64(now-base) * float64(time.Second)
 	require.InEpsilon(t, 10, effectiveRate, 0.01)
+}
+
+func FuzzMatcherData(f *testing.F) {
+	f.Fuzz(func(t *testing.T, tape []byte) {
+		cfg := newTaskQueueConfig(
+			tqid.UnsafeTaskQueueFamily("nsid", "tq").TaskQueue(enumspb.TASK_QUEUE_TYPE_ACTIVITY),
+			NewConfig(dynamicconfig.NewNoopCollection()),
+			"nsname",
+		)
+		ts := clock.NewEventTimeSource()
+		ts.UseAsyncTimers(true)
+		md := newMatcherData(cfg, true, ts)
+		_ = md
+
+		next := func() int {
+			if len(tape) == 0 {
+				return -1
+			}
+			v := tape[0]
+			tape = tape[1:]
+			return int(v)
+		}
+		randms := func(n int) time.Duration { return time.Duration(next()%n+1) * time.Millisecond }
+		randage := func(n int) time.Duration { return -time.Duration(next()%n) * time.Second }
+
+		tid := int64(0)
+		var pollForwarders, taskForwarders atomic.Int64
+		const ops = 20
+
+		for {
+			switch (next() + 1) % ops {
+			case 0:
+				return
+
+			case 1: // add backlog task
+				tid++
+				ati := &persistencespb.AllocatedTaskInfo{
+					Data: &persistencespb.TaskInfo{
+						CreateTime: timestamppb.New(ts.Now().Add(randage(10))),
+					},
+					TaskId: tid,
+				}
+				md.EnqueueTaskNoWait(newInternalTaskFromBacklog(ati, nil))
+
+			case 2: // add backlog task with priority
+				tid++
+				ati := &persistencespb.AllocatedTaskInfo{
+					Data: &persistencespb.TaskInfo{
+						CreateTime: timestamppb.New(ts.Now().Add(randage(10))),
+						Priority: &commonpb.Priority{
+							PriorityKey: int32(1 + next()%5),
+						},
+					},
+					TaskId: tid,
+				}
+				md.EnqueueTaskNoWait(newInternalTaskFromBacklog(ati, nil))
+
+			case 3: // add poller
+				timeout := randms(100)
+				queryOnly := next()%8 == 0
+				go func() {
+					ctx, cancel := clock.ContextWithTimeout(context.Background(), timeout, ts)
+					defer cancel()
+					md.EnqueuePollerAndWait([]context.Context{ctx}, &waitingPoller{
+						startTime:    ts.Now(),
+						forwardCtx:   ctx, // FIXME: not always forwardable?
+						pollMetadata: &pollMetadata{},
+						queryOnly:    queryOnly,
+					})
+				}()
+
+			case 4: // add query task
+				timeout := randms(100)
+				go func() {
+					ctx, cancel := clock.ContextWithTimeout(context.Background(), timeout, ts)
+					defer cancel()
+					t := newInternalQueryTask("123", nil)
+					t.forwardCtx = ctx
+					md.EnqueueTaskAndWait([]context.Context{ctx}, t)
+				}()
+
+			case 5: // add poll forwarder
+				if pollForwarders.Load() >= 2 {
+					continue
+				}
+				pollForwarders.Add(1)
+				sleepTime := randms(100)
+				go func() {
+					defer pollForwarders.Add(-1)
+					res := md.EnqueueTaskAndWait(nil, &internalTask{isPollForwarder: true})
+					bugIf(res.ctxErr != nil || res.poller == nil, "")
+					ts.Sleep(sleepTime)
+					t := &persistencespb.TaskInfo{
+						CreateTime: timestamppb.New(ts.Now()),
+					}
+					md.FinishMatchAfterPollForward(res.poller, newInternalTaskForSyncMatch(t, nil))
+				}()
+
+			case 6: // add task forwarder
+				if taskForwarders.Load() >= 2 {
+					continue
+				}
+				taskForwarders.Add(1)
+				sleepTime := randms(100)
+				go func() {
+					defer taskForwarders.Add(-1)
+					res := md.EnqueuePollerAndWait(nil, &waitingPoller{isTaskForwarder: true})
+					bugIf(res.ctxErr != nil || res.task == nil, "")
+					ts.Sleep(sleepTime)
+					res.task.finishForward(nil, nil, true)
+				}()
+
+			case ops - 1: // jump ahead, just to speed things up
+				ts.AdvanceNext()
+				gosched(3)
+
+			default:
+				ts.Advance(time.Millisecond)
+				gosched(3)
+			}
+		}
+
+		for ts.NumTimers() > 0 {
+			ts.AdvanceNext()
+			gosched(3)
+		}
+	})
+}
+
+func gosched(n int) {
+	for range n {
+		runtime.Gosched()
+	}
 }
