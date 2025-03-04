@@ -438,6 +438,7 @@ func (s *MatcherDataSuite) TestPollForwardFailedTimedOut() {
 
 	s.md.EnqueueTaskNoWait(t1)
 
+	done := make(chan struct{})
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -449,12 +450,15 @@ func (s *MatcherDataSuite) TestPollForwardFailedTimedOut() {
 		time.Sleep(11 * time.Millisecond)
 		// but we waited too long, poller timed out, so this does nothing (but doesn't crash or assert)
 		s.md.ReenqueuePollerIfNotMatched(tres.poller)
+		done <- struct{}{}
 	}()
 
 	s.waitForTasks(2)
 
 	s.Equal(t1, s.pollRealTime(10*time.Millisecond).task)
 	s.Error(s.pollRealTime(10 * time.Millisecond).ctxErr)
+
+	<-done
 }
 
 // simple limiter tests
