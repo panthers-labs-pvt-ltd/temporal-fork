@@ -355,7 +355,7 @@ func (d *matcherData) EnqueuePollerAndWait(ctxs []context.Context, poller *waiti
 	return poller.waitForMatch()
 }
 
-func (d *matcherData) MatchNextPoller(task *internalTask) (canSyncMatch, gotSyncMatch bool) {
+func (d *matcherData) MatchTaskImmediately(task *internalTask) (canSyncMatch, gotSyncMatch bool) {
 	d.lock.Lock()
 	defer d.lock.Unlock()
 

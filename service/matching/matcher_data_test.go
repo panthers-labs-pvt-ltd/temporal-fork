@@ -50,10 +50,6 @@ don't match with fwdr if not allow forwarding
 
 put in a bunch of tasks and reprocess them
 
-context timeouts
-
-
-
 */
 
 type MatcherDataSuite struct {
@@ -86,10 +82,10 @@ func (s *MatcherDataSuite) newSyncTask(fwdInfo *taskqueuespb.TaskForwardInfo) *i
 	return newInternalTaskForSyncMatch(t, fwdInfo)
 }
 
-func (s *MatcherDataSuite) newBacklogTask(id int64, f func(*internalTask, taskResponse)) *internalTask {
+func (s *MatcherDataSuite) newBacklogTask(id int64, age time.Duration, f func(*internalTask, taskResponse)) *internalTask {
 	t := &persistencespb.AllocatedTaskInfo{
 		Data: &persistencespb.TaskInfo{
-			CreateTime: timestamppb.New(s.now()),
+			CreateTime: timestamppb.New(s.now().Add(-age)),
 		},
 		TaskId: id,
 	}
@@ -112,7 +108,7 @@ func (s *MatcherDataSuite) TestMatchBacklogTask() {
 		gotResponse = true
 		s.NoError(tres.startErr)
 	}
-	t := s.newBacklogTask(123, done)
+	t := s.newBacklogTask(123, 0, done)
 	s.md.EnqueueTaskNoWait(t)
 
 	// now should match with task
@@ -132,6 +128,49 @@ func (s *MatcherDataSuite) TestMatchBacklogTask() {
 	pres = s.md.EnqueuePollerAndWait([]context.Context{context.Background(), ctx}, poller)
 	s.Error(context.DeadlineExceeded, pres.ctxErr)
 	s.Equal(1, pres.ctxErrIdx, "deadline context was index 1")
+}
+
+func (s *MatcherDataSuite) TestMatchTaskImmediately() {
+	t := s.newSyncTask(nil)
+
+	// no match yet
+	canSyncMatch, gotSyncMatch := s.md.MatchTaskImmediately(t)
+	s.True(canSyncMatch)
+	s.False(gotSyncMatch)
+
+	// poll in a goroutine
+	ch := make(chan *matchResult, 1)
+	go func() {
+		poller := &waitingPoller{startTime: s.now()}
+		ch <- s.md.EnqueuePollerAndWait(nil, poller)
+	}()
+
+	// wait until poller queued
+	s.Eventually(func() bool {
+		s.md.lock.Lock()
+		defer s.md.lock.Unlock()
+		return s.md.pollers.Len() > 0
+	}, time.Second, time.Millisecond)
+
+	// should match this time
+	canSyncMatch, gotSyncMatch = s.md.MatchTaskImmediately(t)
+	s.True(canSyncMatch)
+	s.True(gotSyncMatch)
+
+	// check match
+	pres := <-ch
+	s.NoError(pres.ctxErr)
+	s.Equal(t, pres.task)
+}
+
+func (s *MatcherDataSuite) TestMatchTaskImmediatelyDisabledBacklog() {
+	// register some backlog with old tasks
+	s.md.EnqueueTaskNoWait(s.newBacklogTask(123, 10*time.Minute, nil))
+
+	t := s.newSyncTask(nil)
+	canSyncMatch, gotSyncMatch := s.md.MatchTaskImmediately(t)
+	s.False(canSyncMatch)
+	s.False(gotSyncMatch)
 }
 
 // simple limiter tests
