@@ -173,7 +173,13 @@ func (t *taskPQ) Less(i int, j int) bool {
 
 	// Note: sync match tasks have a fixed negative id.
 	// Query tasks will get 0 here.
-	aid, bid := a.event.GetTaskId(), b.event.GetTaskId()
+	var aid, bid int64
+	if a.event != nil && a.event.AllocatedTaskInfo != nil {
+		aid = a.event.AllocatedTaskInfo.TaskId
+	}
+	if b.event != nil && b.event.AllocatedTaskInfo != nil {
+		bid = b.event.AllocatedTaskInfo.TaskId
+	}
 	return aid < bid
 }
 
