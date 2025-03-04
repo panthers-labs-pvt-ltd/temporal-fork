@@ -266,11 +266,10 @@ func (db *taskQueueDB) SyncState(ctx context.Context) error {
 	defer db.Unlock()
 	defer db.emitBacklogGauges()
 
-	// We only need to write if something changed, or if we're a sticky queue and haven't
-	// otherwise written anything for half our ttl. Otherwise we can skip the write.
-	needWrite := db.lastChange.After(db.lastWrite) ||
-		db.queue.Partition().Kind() == enumspb.TASK_QUEUE_KIND_STICKY &&
-			time.Since(db.lastWrite) > stickyTaskQueueTTL/2
+	// We only need to write if something changed, or if we're past half of the sticky queue TTL.
+	// Note that we use the same threshold for non-sticky queues even though they don't have a
+	// persistence TTL, since the scavenger looks for metadata that hasn't been updated in 48 hours.
+	needWrite := db.lastChange.After(db.lastWrite) || time.Since(db.lastWrite) > stickyTaskQueueTTL/2
 	if !needWrite {
 		return nil
 	}
