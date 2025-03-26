@@ -33,6 +33,9 @@ import (
 	"time"
 
 	"go.temporal.io/api/serviceerror"
+	"golang.org/x/sync/semaphore"
+	"golang.org/x/time/rate"
+
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/headers"
 	"go.temporal.io/server/common/log"
@@ -42,11 +45,10 @@ import (
 	"go.temporal.io/server/common/namespace"
 	"go.temporal.io/server/common/persistence"
 	"go.temporal.io/server/common/pingable"
+	"go.temporal.io/server/common/quotas"
 	serviceerrors "go.temporal.io/server/common/serviceerror"
 	"go.temporal.io/server/service/history/configs"
 	historyi "go.temporal.io/server/service/history/interfaces"
-	"golang.org/x/sync/semaphore"
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -402,6 +404,11 @@ func (c *ControllerImpl) acquireShards(ctx context.Context) {
 
 	ctx = headers.SetCallerInfo(ctx, headers.SystemBackgroundCallerInfo)
 
+	var acquireLimiter quotas.RateLimiter
+	if rlimit := c.config.AcquireShardRateLimit(); rlimit > 0 {
+		acquireLimiter = quotas.NewRateLimiter(rlimit, 1)
+	}
+
 	tryAcquire := func(shardID int32) {
 		if err := c.ownership.verifyOwnership(shardID); err != nil {
 			if IsShardOwnershipLostError(err) {
@@ -413,6 +420,10 @@ func (c *ControllerImpl) acquireShards(ctx context.Context) {
 				}
 			}
 			return
+		}
+
+		if acquireLimiter != nil {
+			_ = acquireLimiter.Wait(context.Background())
 		}
 
 		shard, err := c.GetShardByID(shardID)

@@ -31,6 +31,7 @@ import (
 
 	enumspb "go.temporal.io/api/enums/v1"
 	sdkworker "go.temporal.io/sdk/worker"
+
 	"go.temporal.io/server/common/debug"
 	"go.temporal.io/server/common/primitives"
 	"go.temporal.io/server/common/retrypolicy"
@@ -1457,6 +1458,11 @@ This can help reduce effects of shard movement.`,
 		"history.acquireShardConcurrency",
 		10,
 		`AcquireShardConcurrency is number of goroutines that can be used to acquire shards in the shard controller.`,
+	)
+	AcquireShardRateLimit = NewGlobalFloatSetting(
+		"history.acquireShardRateLimit",
+		4,
+		`AcquireShardRateLimit is the per-second rate limit for acquiring new shards in the shard controller.`,
 	)
 	ShardLingerOwnershipCheckQPS = NewGlobalIntSetting(
 		"history.shardLingerOwnershipCheckQPS",

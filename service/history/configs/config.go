@@ -99,6 +99,7 @@ type Config struct {
 	RangeSizeBits                uint
 	AcquireShardInterval         dynamicconfig.DurationPropertyFn
 	AcquireShardConcurrency      dynamicconfig.IntPropertyFn
+	AcquireShardRateLimit        dynamicconfig.FloatPropertyFn
 	ShardIOConcurrency           dynamicconfig.IntPropertyFn
 	ShardIOTimeout               dynamicconfig.DurationPropertyFn
 	ShardLingerOwnershipCheckQPS dynamicconfig.IntPropertyFn
@@ -450,6 +451,7 @@ func NewConfig(
 
 		AcquireShardInterval:         dynamicconfig.AcquireShardInterval.Get(dc),
 		AcquireShardConcurrency:      dynamicconfig.AcquireShardConcurrency.Get(dc),
+		AcquireShardRateLimit:        dynamicconfig.AcquireShardRateLimit.Get(dc),
 		ShardIOConcurrency:           dynamicconfig.ShardIOConcurrency.Get(dc),
 		ShardIOTimeout:               dynamicconfig.ShardIOTimeout.Get(dc),
 		ShardLingerOwnershipCheckQPS: dynamicconfig.ShardLingerOwnershipCheckQPS.Get(dc),
