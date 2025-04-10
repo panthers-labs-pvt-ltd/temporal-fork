@@ -1426,11 +1426,11 @@ timeout timer when execution timeout is specified when starting a workflow.
 For backward compatibility, this feature is disabled by default and should only be enabled after server version
 containing this flag is deployed to all history service nodes in the cluster.`,
 	)
-	EnableUpdateClosedWorkflowByMutation = NewGlobalBoolSetting(
-		"history.enableUpdateClosedWorkflowByMutation",
+	EnableUpdateWorkflowModeIgnoreCurrent = NewGlobalBoolSetting(
+		"history.enableUpdateWorkflowModeIgnoreCurrent",
 		true,
-		`EnableUpdateClosedWorkflowByMutation controls whether to enable the new logic for updating closed workflow execution
-by mutation using UpdateWorkflowModeSkipCurrent`,
+		`EnableUpdateWorkflowModeIgnoreCurrent controls whether to enable the new logic for updating closed workflow execution
+by mutation using UpdateWorkflowModeIgnoreCurrent`,
 	)
 	EnableTransitionHistory = NewGlobalBoolSetting(
 		"history.enableTransitionHistory",
