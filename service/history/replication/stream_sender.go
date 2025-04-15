@@ -616,6 +616,7 @@ Loop:
 func (s *StreamSenderImpl) sendToStream(payload *historyservice.StreamWorkflowReplicationMessagesResponse) error {
 	s.sendLock.Lock()
 	defer s.sendLock.Unlock()
+	println("sending replication task")
 	err := s.server.Send(payload)
 	if err != nil {
 		return NewStreamError("Stream Sender unable to send", err)

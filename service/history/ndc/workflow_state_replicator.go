@@ -126,6 +126,7 @@ func (r *WorkflowStateReplicatorImpl) SyncWorkflowState(
 	if executionState.State != enumsspb.WORKFLOW_EXECUTION_STATE_COMPLETED {
 		return serviceerror.NewInternal("Replicate non completed workflow state is not supported.")
 	}
+	r.logger.Info("start sync", tag.WorkflowRunID(request.WorkflowState.ExecutionState.RunId))
 
 	wfCtx, releaseFn, err := r.workflowCache.GetOrCreateWorkflowExecution(
 		ctx,
@@ -147,6 +148,7 @@ func (r *WorkflowStateReplicatorImpl) SyncWorkflowState(
 		}
 		releaseFn(retError)
 	}()
+	r.logger.Info("Got lock", tag.WorkflowRunID(request.WorkflowState.ExecutionState.RunId))
 
 	// Handle existing workflows
 	ms, err := wfCtx.LoadMutableState(ctx, r.shardContext)
@@ -936,6 +938,7 @@ func (r *WorkflowStateReplicatorImpl) applySnapshotWhenWorkflowNotExist(
 	newRunInfo *replicationspb.NewRunInfo,
 	isStateBased bool,
 ) error {
+	r.logger.Info("Start applying", tag.WorkflowRunID(sourceMutableState.ExecutionState.RunId))
 	executionInfo := sourceMutableState.ExecutionInfo
 	currentVersionHistory, err := versionhistory.GetCurrentVersionHistory(executionInfo.VersionHistories)
 	if err != nil {
@@ -1003,6 +1006,8 @@ func (r *WorkflowStateReplicatorImpl) applySnapshotWhenWorkflowNotExist(
 		newHistoryBranchToken,
 		isStateBased,
 	)
+	r.logger.Info("Backfilled", tag.WorkflowRunID(sourceMutableState.ExecutionState.RunId))
+
 	if err != nil {
 		return err
 	}
@@ -1033,6 +1038,7 @@ func (r *WorkflowStateReplicatorImpl) applySnapshotWhenWorkflowNotExist(
 	if err != nil {
 		return err
 	}
+	r.logger.Info("task refreshed", tag.WorkflowRunID(sourceMutableState.ExecutionState.RunId))
 	return r.transactionMgr.CreateWorkflow(
 		ctx,
 		NewWorkflow(

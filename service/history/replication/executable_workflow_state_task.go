@@ -103,6 +103,7 @@ func (e *ExecutableWorkflowStateTask) Execute() error {
 	if e.TerminalState() {
 		return nil
 	}
+	e.Logger.Info("executing workflow state replication task", tag.WorkflowRunID(e.RunID))
 
 	namespaceName, apply, err := e.GetNamespaceInfo(headers.SetCallerInfo(
 		context.Background(),
@@ -131,6 +132,8 @@ func (e *ExecutableWorkflowStateTask) Execute() error {
 		namespace.ID(e.NamespaceID),
 		e.WorkflowID,
 	)
+	e.Logger.Info("Got shardContext", tag.WorkflowRunID(e.RunID))
+
 	if err != nil {
 		return err
 	}
@@ -138,6 +141,8 @@ func (e *ExecutableWorkflowStateTask) Execute() error {
 	if err != nil {
 		return err
 	}
+	e.Logger.Info("Got engine", tag.WorkflowRunID(e.RunID))
+
 	return engine.ReplicateWorkflowState(ctx, e.req)
 }
 
