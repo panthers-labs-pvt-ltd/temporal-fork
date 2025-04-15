@@ -125,6 +125,7 @@ func (s *SequentialScheduler[T]) Stop() {
 func (s *SequentialScheduler[T]) Submit(task T) {
 	queue := s.queueFactory(task)
 	queue.Add(task)
+	s.logger.Info("Submitting Task", tag.WorkflowRunID(queue.ID().(string)))
 
 	_, fnEvaluated, err := s.queues.PutOrDo(
 		queue.ID(),
@@ -162,12 +163,14 @@ func (s *SequentialScheduler[T]) Submit(task T) {
 func (s *SequentialScheduler[T]) TrySubmit(task T) bool {
 	queue := s.queueFactory(task)
 	queue.Add(task)
+	s.logger.Info("Try Submitting Task", tag.WorkflowRunID(queue.ID().(string)))
 
 	_, fnEvaluated, err := s.queues.PutOrDo(
 		queue.ID(),
 		queue,
 		func(key interface{}, value interface{}) error {
 			value.(SequentialTaskQueue[T]).Add(task)
+			s.logger.Info("found queue, adding task:", tag.WorkflowRunID(queue.ID().(string)))
 			return nil
 		},
 	)
@@ -302,6 +305,8 @@ func (s *SequentialScheduler[T]) processTaskQueue(
 
 // TODO: change this function to process all available tasks in the queue.
 func (s *SequentialScheduler[T]) executeTask(queue SequentialTaskQueue[T]) {
+	s.logger.Info("Executing queue", tag.WorkflowRunID(queue.ID().(string)))
+
 	var panicErr error
 	defer log.CapturePanic(s.logger, &panicErr)
 	shouldRetry := true
