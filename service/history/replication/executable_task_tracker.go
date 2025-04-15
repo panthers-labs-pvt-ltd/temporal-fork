@@ -178,6 +178,7 @@ Loop:
 	}
 
 	if element := t.taskQueue.Front(); element != nil {
+		t.logger.Info(fmt.Sprintf("FrontTask: Status: %v, TaskId", element.Value.(TrackableExecutableTask).State()), tag.TaskID(element.Value.(TrackableExecutableTask).TaskID()))
 		inclusiveLowWatermarkInfo := WatermarkInfo{
 			Watermark: element.Value.(TrackableExecutableTask).TaskID(),
 			Timestamp: element.Value.(TrackableExecutableTask).TaskCreationTime(),

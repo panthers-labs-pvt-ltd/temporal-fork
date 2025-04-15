@@ -154,6 +154,7 @@ func (r *WorkflowStateReplicatorImpl) SyncWorkflowState(
 	ms, err := wfCtx.LoadMutableState(ctx, r.shardContext)
 	switch err.(type) {
 	case *serviceerror.NotFound:
+		r.logger.Info("NotFound", tag.WorkflowRunID(request.WorkflowState.ExecutionState.RunId))
 		// no-op, continue to replicate workflow state
 	case nil:
 		if len(request.WorkflowState.ExecutionInfo.TransitionHistory) != 0 {
@@ -198,6 +199,7 @@ func (r *WorkflowStateReplicatorImpl) SyncWorkflowState(
 		}
 
 		// we don't care about activity state here as activity can't run after workflow is closed.
+		r.logger.Info("Syncing", tag.WorkflowRunID(request.WorkflowState.ExecutionState.RunId))
 		return engine.SyncHSM(ctx, &historyi.SyncHSMRequest{
 			WorkflowKey: ms.GetWorkflowKey(),
 			StateMachineNode: &persistencespb.StateMachineNode{

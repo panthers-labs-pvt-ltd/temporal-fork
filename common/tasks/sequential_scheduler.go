@@ -131,6 +131,7 @@ func (s *SequentialScheduler[T]) Submit(task T) {
 		queue,
 		func(key interface{}, value interface{}) error {
 			value.(SequentialTaskQueue[T]).Add(task)
+			s.logger.Info("found queue, adding task:", tag.WorkflowRunID(queue.ID().(string)))
 			return nil
 		},
 	)
@@ -307,6 +308,7 @@ func (s *SequentialScheduler[T]) executeTask(queue SequentialTaskQueue[T]) {
 	task := queue.Remove()
 
 	operation := func() (retErr error) {
+		s.logger.Info("Executing task", tag.WorkflowRunID(queue.ID().(string)))
 		var executePanic error
 		defer func() {
 			if executePanic != nil {
