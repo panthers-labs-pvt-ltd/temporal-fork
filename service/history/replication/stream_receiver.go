@@ -361,10 +361,9 @@ func (r *StreamReceiverImpl) processMessages(
 			Timestamp: exclusiveHighWatermarkTime,
 		}, convertedTasks...) {
 			r.logger.Info("Submitting task", tag.TaskID(task.TaskID()), tag.WorkflowRunID(task.QueueID().(definition.WorkflowKey).RunID))
-			if submitted := taskScheduler.TrySubmit(task); !submitted {
-				r.logger.Warn("no enough worker to process replication tasks", tag.TaskID(task.TaskID()))
-				taskScheduler.Submit(task)
-			}
+			
+			//r.logger.Warn("no enough worker to process replication tasks", tag.TaskID(task.TaskID()))
+			taskScheduler.Submit(task)
 
 		}
 	}

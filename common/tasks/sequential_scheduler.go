@@ -25,8 +25,6 @@
 package tasks
 
 import (
-	"fmt"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -128,10 +126,6 @@ func (s *SequentialScheduler[T]) Stop() {
 func (s *SequentialScheduler[T]) Submit(task T) {
 	queue := s.queueFactory(task)
 	queue.Add(task)
-	buf := make([]byte, 10240) // Pre-allocate a buffer
-	n := runtime.Stack(buf, false)
-	fmt.Printf("Stack trace:\n%s", buf[:n])
-	s.logger.Info(fmt.Sprintf("Submitting Task: %s", buf[:n]), tag.WorkflowRunID(queue.ID().(definition.WorkflowKey).RunID))
 
 	_, fnEvaluated, err := s.queues.PutOrDo(
 		queue.ID(),
