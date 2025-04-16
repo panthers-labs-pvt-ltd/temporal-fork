@@ -38,6 +38,7 @@ import (
 	replicationspb "go.temporal.io/server/api/replication/v1"
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/channel"
+	"go.temporal.io/server/common/definition"
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/tag"
 	"go.temporal.io/server/common/metrics"
@@ -359,6 +360,7 @@ func (r *StreamReceiverImpl) processMessages(
 			Watermark: exclusiveHighWatermark,
 			Timestamp: exclusiveHighWatermarkTime,
 		}, convertedTasks...) {
+			r.logger.Info("submitting task", tag.TaskID(task.TaskID()), tag.WorkflowRunID(task.QueueID().(definition.WorkflowKey).RunID))
 			if submitted := taskScheduler.TrySubmit(task); !submitted {
 				r.logger.Warn("no enough worker to process replication tasks", tag.TaskID(task.TaskID()))
 				taskScheduler.Submit(task)

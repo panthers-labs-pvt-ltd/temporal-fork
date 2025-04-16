@@ -103,7 +103,7 @@ func (e *ExecutableWorkflowStateTask) Execute() error {
 	if e.TerminalState() {
 		return nil
 	}
-	e.Logger.Info("executing workflow state replication task", tag.WorkflowRunID(e.RunID))
+	e.Logger.Info("executing workflow state replication task", tag.WorkflowRunID(e.RunID), tag.TaskID(e.ExecutableTask.TaskID()))
 
 	namespaceName, apply, err := e.GetNamespaceInfo(headers.SetCallerInfo(
 		context.Background(),
@@ -142,8 +142,20 @@ func (e *ExecutableWorkflowStateTask) Execute() error {
 		return err
 	}
 	e.Logger.Info("Got engine", tag.WorkflowRunID(e.RunID))
+	err = engine.ReplicateWorkflowState(ctx, e.req)
 
-	return engine.ReplicateWorkflowState(ctx, e.req)
+	if err != nil {
+		e.Logger.Error("Failed to replicate workflow state",
+			tag.WorkflowNamespaceID(e.NamespaceID),
+			tag.WorkflowID(e.WorkflowID),
+			tag.WorkflowRunID(e.RunID),
+			tag.TaskID(e.ExecutableTask.TaskID()),
+			tag.Error(err),
+		)
+		return err
+	}
+	e.Logger.Info("Finish workflow state replication task", tag.WorkflowRunID(e.RunID), tag.TaskID(e.ExecutableTask.TaskID()))
+	return nil
 }
 
 func (e *ExecutableWorkflowStateTask) HandleErr(err error) error {

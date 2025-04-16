@@ -327,6 +327,8 @@ func (s *SequentialScheduler[T]) executeTask(queue SequentialTaskQueue[T]) {
 		if err := task.Execute(); err != nil {
 			return task.HandleErr(err)
 		}
+		s.logger.Info("Finish task", tag.WorkflowRunID(queue.ID().(definition.WorkflowKey).RunID))
+
 		return nil
 	}
 	isRetryable := func(err error) bool {
