@@ -32,6 +32,7 @@ import (
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/backoff"
 	"go.temporal.io/server/common/collection"
+	"go.temporal.io/server/common/definition"
 	"go.temporal.io/server/common/dynamicconfig"
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/tag"
@@ -125,14 +126,14 @@ func (s *SequentialScheduler[T]) Stop() {
 func (s *SequentialScheduler[T]) Submit(task T) {
 	queue := s.queueFactory(task)
 	queue.Add(task)
-	s.logger.Info("Submitting Task", tag.WorkflowRunID(queue.ID().(string)))
+	s.logger.Info("Submitting Task", tag.WorkflowRunID(queue.ID().(definition.WorkflowKey).RunID))
 
 	_, fnEvaluated, err := s.queues.PutOrDo(
 		queue.ID(),
 		queue,
 		func(key interface{}, value interface{}) error {
 			value.(SequentialTaskQueue[T]).Add(task)
-			s.logger.Info("found queue, adding task:", tag.WorkflowRunID(queue.ID().(string)))
+			s.logger.Info("found queue, adding task:", tag.WorkflowRunID(queue.ID().(definition.WorkflowKey).RunID))
 			return nil
 		},
 	)
@@ -163,14 +164,14 @@ func (s *SequentialScheduler[T]) Submit(task T) {
 func (s *SequentialScheduler[T]) TrySubmit(task T) bool {
 	queue := s.queueFactory(task)
 	queue.Add(task)
-	s.logger.Info("Try Submitting Task", tag.WorkflowRunID(queue.ID().(string)))
+	s.logger.Info("Try Submitting Task", tag.WorkflowRunID(queue.ID().(definition.WorkflowKey).RunID))
 
 	_, fnEvaluated, err := s.queues.PutOrDo(
 		queue.ID(),
 		queue,
 		func(key interface{}, value interface{}) error {
 			value.(SequentialTaskQueue[T]).Add(task)
-			s.logger.Info("found queue, adding task:", tag.WorkflowRunID(queue.ID().(string)))
+			s.logger.Info("found queue, adding task:", tag.WorkflowRunID(queue.ID().(definition.WorkflowKey).RunID))
 			return nil
 		},
 	)
@@ -305,7 +306,7 @@ func (s *SequentialScheduler[T]) processTaskQueue(
 
 // TODO: change this function to process all available tasks in the queue.
 func (s *SequentialScheduler[T]) executeTask(queue SequentialTaskQueue[T]) {
-	s.logger.Info("Executing queue", tag.WorkflowRunID(queue.ID().(string)))
+	s.logger.Info("Executing queue", tag.WorkflowRunID(queue.ID().(definition.WorkflowKey).RunID))
 
 	var panicErr error
 	defer log.CapturePanic(s.logger, &panicErr)
@@ -313,7 +314,7 @@ func (s *SequentialScheduler[T]) executeTask(queue SequentialTaskQueue[T]) {
 	task := queue.Remove()
 
 	operation := func() (retErr error) {
-		s.logger.Info("Executing task", tag.WorkflowRunID(queue.ID().(string)))
+		s.logger.Info("Executing task", tag.WorkflowRunID(queue.ID().(definition.WorkflowKey).RunID))
 		var executePanic error
 		defer func() {
 			if executePanic != nil {
