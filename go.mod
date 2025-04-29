@@ -80,6 +80,8 @@ require (
 	modernc.org/sqlite v1.34.1
 )
 
+require github.com/temporalio/api v1.48.1-0.20250429153432-ea3ef496a5d0 // indirect
+
 require (
 	cel.dev/expr v0.20.0 // indirect
 	cloud.google.com/go v0.118.3 // indirect; indirect e
