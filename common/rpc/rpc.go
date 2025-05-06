@@ -227,7 +227,6 @@ func (d *RPCFactory) createInternodeGRPCConnection(hostName string, serviceName 
 			return nil
 		}
 	}
-	d.logger.Info(fmt.Sprintf("Grpc client connection config: %v, %v", serviceName, d.getClientKeepAliveConfig(serviceName)))
 	c := d.dial(hostName, tlsClientConfig, d.getClientKeepAliveConfig(serviceName))
 	d.interNodeGrpcConnections.Put(hostName, c)
 	return c
@@ -254,7 +253,9 @@ func (d *RPCFactory) dial(hostName string, tlsClientConfig *tls.Config, dialOpti
 
 func (d *RPCFactory) getClientKeepAliveConfig(serviceName primitives.ServiceName) grpc.DialOption {
 	serviceConfig := d.config.Services[string(serviceName)]
-	return grpc.WithKeepaliveParams(serviceConfig.RPC.ClientConnectionConfig.GetKeepAliveClientParameters())
+	cfg := serviceConfig.RPC.ClientConnectionConfig.GetKeepAliveClientParameters()
+	d.logger.Info(fmt.Sprintf("Grpc client connection config: %v, %v", serviceName, cfg))
+	return grpc.WithKeepaliveParams(cfg)
 }
 
 func (d *RPCFactory) GetTLSConfigProvider() encryption.TLSConfigProvider {
