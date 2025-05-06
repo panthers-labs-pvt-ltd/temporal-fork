@@ -129,6 +129,7 @@ func (d *RPCFactory) GetInternodeGRPCServerOptions() ([]grpc.ServerOption, error
 	rpcConfig := d.config.Services[string(d.serviceName)].RPC
 	kep := rpcConfig.KeepAliveServerConfig.GetKeepAliveEnforcementPolicy()
 	kp := rpcConfig.KeepAliveServerConfig.GetKeepAliveServerParameters()
+	d.logger.Info(fmt.Sprintf("gRPC server keep alive config: %v, %v", kep, kp))
 	opts = append(opts, grpc.KeepaliveEnforcementPolicy(kep), grpc.KeepaliveParams(kp))
 
 	return opts, nil
@@ -226,6 +227,7 @@ func (d *RPCFactory) createInternodeGRPCConnection(hostName string, serviceName 
 			return nil
 		}
 	}
+	d.logger.Info(fmt.Sprintf("Grpc client connection config: %v, %v", serviceName, d.getClientKeepAliveConfig(serviceName)))
 	c := d.dial(hostName, tlsClientConfig, d.getClientKeepAliveConfig(serviceName))
 	d.interNodeGrpcConnections.Put(hostName, c)
 	return c
