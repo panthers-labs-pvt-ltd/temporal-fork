@@ -274,10 +274,7 @@ func (h *Handler) IsActivityTaskValid(ctx context.Context, request *historyservi
 	return response, nil
 }
 
-func (h *Handler) RecordActivityTaskHeartbeat(
-	ctx context.Context,
-	request *historyservice.RecordActivityTaskHeartbeatRequest,
-) (_ *historyservice.RecordActivityTaskHeartbeatResponse, retError error) {
+func (h *Handler) RecordActivityTaskHeartbeat(ctx context.Context, request *historyservice.RecordActivityTaskHeartbeatRequest) (_ *historyservice.RecordActivityTaskHeartbeatResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -321,10 +318,7 @@ func (h *Handler) RecordActivityTaskHeartbeat(
 }
 
 // RecordActivityTaskStarted - Record Activity Task started.
-func (h *Handler) RecordActivityTaskStarted(
-	ctx context.Context,
-	request *historyservice.RecordActivityTaskStartedRequest,
-) (_ *historyservice.RecordActivityTaskStartedResponse, retError error) {
+func (h *Handler) RecordActivityTaskStarted(ctx context.Context, request *historyservice.RecordActivityTaskStartedRequest) (_ *historyservice.RecordActivityTaskStartedResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -361,10 +355,7 @@ func (h *Handler) RecordActivityTaskStarted(
 }
 
 // RecordWorkflowTaskStarted - Record Workflow Task started.
-func (h *Handler) RecordWorkflowTaskStarted(
-	ctx context.Context,
-	request *historyservice.RecordWorkflowTaskStartedRequest,
-) (_ *historyservice.RecordWorkflowTaskStartedResponseWithRawHistory, retError error) {
+func (h *Handler) RecordWorkflowTaskStarted(ctx context.Context, request *historyservice.RecordWorkflowTaskStartedRequest) (_ *historyservice.RecordWorkflowTaskStartedResponseWithRawHistory, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -381,16 +372,16 @@ func (h *Handler) RecordWorkflowTaskStarted(
 
 	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
 	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
 		h.logger.Error("RecordWorkflowTaskStarted failed.",
 			tag.Error(err),
 			tag.WorkflowID(request.WorkflowExecution.GetWorkflowId()),
 			tag.WorkflowRunID(request.WorkflowExecution.GetRunId()),
 			tag.WorkflowScheduledEventID(request.GetScheduledEventId()),
 		)
+		return nil, h.convertError(err)
+	}
+	engine, err := shardContext.GetEngine(ctx)
+	if err != nil {
 		return nil, h.convertError(err)
 	}
 
@@ -411,10 +402,7 @@ func (h *Handler) RecordWorkflowTaskStarted(
 }
 
 // RespondActivityTaskCompleted - records completion of an activity task
-func (h *Handler) RespondActivityTaskCompleted(
-	ctx context.Context,
-	request *historyservice.RespondActivityTaskCompletedRequest,
-) (_ *historyservice.RespondActivityTaskCompletedResponse, retError error) {
+func (h *Handler) RespondActivityTaskCompleted(ctx context.Context, request *historyservice.RespondActivityTaskCompletedRequest) (_ *historyservice.RespondActivityTaskCompletedResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -458,10 +446,7 @@ func (h *Handler) RespondActivityTaskCompleted(
 }
 
 // RespondActivityTaskFailed - records failure of an activity task
-func (h *Handler) RespondActivityTaskFailed(
-	ctx context.Context,
-	request *historyservice.RespondActivityTaskFailedRequest,
-) (_ *historyservice.RespondActivityTaskFailedResponse, retError error) {
+func (h *Handler) RespondActivityTaskFailed(ctx context.Context, request *historyservice.RespondActivityTaskFailedRequest) (_ *historyservice.RespondActivityTaskFailedResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -505,10 +490,7 @@ func (h *Handler) RespondActivityTaskFailed(
 }
 
 // RespondActivityTaskCanceled - records failure of an activity task
-func (h *Handler) RespondActivityTaskCanceled(
-	ctx context.Context,
-	request *historyservice.RespondActivityTaskCanceledRequest,
-) (_ *historyservice.RespondActivityTaskCanceledResponse, retError error) {
+func (h *Handler) RespondActivityTaskCanceled(ctx context.Context, request *historyservice.RespondActivityTaskCanceledRequest) (_ *historyservice.RespondActivityTaskCanceledResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -552,10 +534,7 @@ func (h *Handler) RespondActivityTaskCanceled(
 }
 
 // RespondWorkflowTaskCompleted - records completion of a workflow task
-func (h *Handler) RespondWorkflowTaskCompleted(
-	ctx context.Context,
-	request *historyservice.RespondWorkflowTaskCompletedRequest,
-) (_ *historyservice.RespondWorkflowTaskCompletedResponse, retError error) {
+func (h *Handler) RespondWorkflowTaskCompleted(ctx context.Context, request *historyservice.RespondWorkflowTaskCompletedRequest) (_ *historyservice.RespondWorkflowTaskCompletedResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -605,10 +584,7 @@ func (h *Handler) RespondWorkflowTaskCompleted(
 }
 
 // RespondWorkflowTaskFailed - failed response to workflow task
-func (h *Handler) RespondWorkflowTaskFailed(
-	ctx context.Context,
-	request *historyservice.RespondWorkflowTaskFailedRequest,
-) (_ *historyservice.RespondWorkflowTaskFailedResponse, retError error) {
+func (h *Handler) RespondWorkflowTaskFailed(ctx context.Context, request *historyservice.RespondWorkflowTaskFailedRequest) (_ *historyservice.RespondWorkflowTaskFailedResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -658,10 +634,7 @@ func (h *Handler) RespondWorkflowTaskFailed(
 }
 
 // StartWorkflowExecution - creates a new workflow execution
-func (h *Handler) StartWorkflowExecution(
-	ctx context.Context,
-	request *historyservice.StartWorkflowExecutionRequest,
-) (_ *historyservice.StartWorkflowExecutionResponse, retError error) {
+func (h *Handler) StartWorkflowExecution(ctx context.Context, request *historyservice.StartWorkflowExecutionRequest) (_ *historyservice.StartWorkflowExecutionResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -700,10 +673,7 @@ func (h *Handler) StartWorkflowExecution(
 	return response, nil
 }
 
-func (h *Handler) ExecuteMultiOperation(
-	ctx context.Context,
-	request *historyservice.ExecuteMultiOperationRequest,
-) (_ *historyservice.ExecuteMultiOperationResponse, retError error) {
+func (h *Handler) ExecuteMultiOperation(ctx context.Context, request *historyservice.ExecuteMultiOperationRequest) (_ *historyservice.ExecuteMultiOperationResponse, retError error) {
 	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
 	h.startWG.Wait()
 
@@ -818,10 +788,7 @@ func (h *Handler) GetShard(ctx context.Context, request *historyservice.GetShard
 }
 
 // RebuildMutableState attempts to rebuild mutable state according to persisted history events
-func (h *Handler) RebuildMutableState(
-	ctx context.Context,
-	request *historyservice.RebuildMutableStateRequest,
-) (_ *historyservice.RebuildMutableStateResponse, retError error) {
+func (h *Handler) RebuildMutableState(ctx context.Context, request *historyservice.RebuildMutableStateRequest) (_ *historyservice.RebuildMutableStateResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -860,10 +827,7 @@ func (h *Handler) RebuildMutableState(
 }
 
 // ImportWorkflowExecution attempts to workflow execution according to persisted history events
-func (h *Handler) ImportWorkflowExecution(
-	ctx context.Context,
-	request *historyservice.ImportWorkflowExecutionRequest,
-) (_ *historyservice.ImportWorkflowExecutionResponse, retError error) {
+func (h *Handler) ImportWorkflowExecution(ctx context.Context, request *historyservice.ImportWorkflowExecutionRequest) (_ *historyservice.ImportWorkflowExecutionResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -948,10 +912,7 @@ func (h *Handler) DescribeMutableState(ctx context.Context, request *historyserv
 }
 
 // GetMutableState - returns the id of the next event in the execution's history
-func (h *Handler) GetMutableState(
-	ctx context.Context,
-	request *historyservice.GetMutableStateRequest,
-) (_ *historyservice.GetMutableStateResponse, retError error) {
+func (h *Handler) GetMutableState(ctx context.Context, request *historyservice.GetMutableStateRequest) (_ *historyservice.GetMutableStateResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -988,10 +949,7 @@ func (h *Handler) GetMutableState(
 }
 
 // PollMutableState - returns the id of the next event in the execution's history
-func (h *Handler) PollMutableState(
-	ctx context.Context,
-	request *historyservice.PollMutableStateRequest,
-) (_ *historyservice.PollMutableStateResponse, retError error) {
+func (h *Handler) PollMutableState(ctx context.Context, request *historyservice.PollMutableStateRequest) (_ *historyservice.PollMutableStateResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -1028,10 +986,7 @@ func (h *Handler) PollMutableState(
 }
 
 // DescribeWorkflowExecution returns information about the specified workflow execution.
-func (h *Handler) DescribeWorkflowExecution(
-	ctx context.Context,
-	request *historyservice.DescribeWorkflowExecutionRequest,
-) (_ *historyservice.DescribeWorkflowExecutionResponse, retError error) {
+func (h *Handler) DescribeWorkflowExecution(ctx context.Context, request *historyservice.DescribeWorkflowExecutionRequest) (_ *historyservice.DescribeWorkflowExecutionResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -1068,10 +1023,7 @@ func (h *Handler) DescribeWorkflowExecution(
 }
 
 // RequestCancelWorkflowExecution - requests cancellation of a workflow
-func (h *Handler) RequestCancelWorkflowExecution(
-	ctx context.Context,
-	request *historyservice.RequestCancelWorkflowExecutionRequest,
-) (_ *historyservice.RequestCancelWorkflowExecutionResponse, retError error) {
+func (h *Handler) RequestCancelWorkflowExecution(ctx context.Context, request *historyservice.RequestCancelWorkflowExecutionRequest) (_ *historyservice.RequestCancelWorkflowExecutionResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -1112,10 +1064,7 @@ func (h *Handler) RequestCancelWorkflowExecution(
 
 // SignalWorkflowExecution is used to send a signal event to running workflow execution.  This results in
 // WorkflowExecutionSignaled event recorded in the history and a workflow task being created for the execution.
-func (h *Handler) SignalWorkflowExecution(
-	ctx context.Context,
-	request *historyservice.SignalWorkflowExecutionRequest,
-) (_ *historyservice.SignalWorkflowExecutionResponse, retError error) {
+func (h *Handler) SignalWorkflowExecution(ctx context.Context, request *historyservice.SignalWorkflowExecutionRequest) (_ *historyservice.SignalWorkflowExecutionResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -1153,10 +1102,7 @@ func (h *Handler) SignalWorkflowExecution(
 // and a workflow task being created for the execution.
 // If workflow is not running or not found, this results in WorkflowExecutionStarted and WorkflowExecutionSignaled
 // event recorded in history, and a workflow task being created for the execution
-func (h *Handler) SignalWithStartWorkflowExecution(
-	ctx context.Context,
-	request *historyservice.SignalWithStartWorkflowExecutionRequest,
-) (_ *historyservice.SignalWithStartWorkflowExecutionResponse, retError error) {
+func (h *Handler) SignalWithStartWorkflowExecution(ctx context.Context, request *historyservice.SignalWithStartWorkflowExecutionRequest) (_ *historyservice.SignalWithStartWorkflowExecutionResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -1214,10 +1160,7 @@ func (h *Handler) SignalWithStartWorkflowExecution(
 
 // RemoveSignalMutableState is used to remove a signal request ID that was previously recorded.  This is currently
 // used to clean execution info when signal workflow task finished.
-func (h *Handler) RemoveSignalMutableState(
-	ctx context.Context,
-	request *historyservice.RemoveSignalMutableStateRequest,
-) (_ *historyservice.RemoveSignalMutableStateResponse, retError error) {
+func (h *Handler) RemoveSignalMutableState(ctx context.Context, request *historyservice.RemoveSignalMutableStateRequest) (_ *historyservice.RemoveSignalMutableStateResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -1256,10 +1199,7 @@ func (h *Handler) RemoveSignalMutableState(
 
 // TerminateWorkflowExecution terminates an existing workflow execution by recording WorkflowExecutionTerminated event
 // in the history and immediately terminating the execution instance.
-func (h *Handler) TerminateWorkflowExecution(
-	ctx context.Context,
-	request *historyservice.TerminateWorkflowExecutionRequest,
-) (_ *historyservice.TerminateWorkflowExecutionResponse, retError error) {
+func (h *Handler) TerminateWorkflowExecution(ctx context.Context, request *historyservice.TerminateWorkflowExecutionRequest) (_ *historyservice.TerminateWorkflowExecutionResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -1292,10 +1232,7 @@ func (h *Handler) TerminateWorkflowExecution(
 	return resp, nil
 }
 
-func (h *Handler) DeleteWorkflowExecution(
-	ctx context.Context,
-	request *historyservice.DeleteWorkflowExecutionRequest,
-) (_ *historyservice.DeleteWorkflowExecutionResponse, retError error) {
+func (h *Handler) DeleteWorkflowExecution(ctx context.Context, request *historyservice.DeleteWorkflowExecutionRequest) (_ *historyservice.DeleteWorkflowExecutionResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -1334,10 +1271,7 @@ func (h *Handler) DeleteWorkflowExecution(
 
 // ResetWorkflowExecution reset an existing workflow execution
 // in the history and immediately terminating the execution instance.
-func (h *Handler) ResetWorkflowExecution(
-	ctx context.Context,
-	request *historyservice.ResetWorkflowExecutionRequest,
-) (_ *historyservice.ResetWorkflowExecutionResponse, retError error) {
+func (h *Handler) ResetWorkflowExecution(ctx context.Context, request *historyservice.ResetWorkflowExecutionRequest) (_ *historyservice.ResetWorkflowExecutionResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -1372,10 +1306,7 @@ func (h *Handler) ResetWorkflowExecution(
 
 // UpdateWorkflowExecutionOptions updates the options of a workflow execution.
 // Can be used to set and unset versioning behavior override.
-func (h *Handler) UpdateWorkflowExecutionOptions(
-	ctx context.Context,
-	request *historyservice.UpdateWorkflowExecutionOptionsRequest,
-) (_ *historyservice.UpdateWorkflowExecutionOptionsResponse, retError error) {
+func (h *Handler) UpdateWorkflowExecutionOptions(ctx context.Context, request *historyservice.UpdateWorkflowExecutionOptionsRequest) (_ *historyservice.UpdateWorkflowExecutionOptionsResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
@@ -1409,10 +1340,7 @@ func (h *Handler) UpdateWorkflowExecutionOptions(
 }
 
 // QueryWorkflow queries a workflow.
-func (h *Handler) QueryWorkflow(
-	ctx context.Context,
-	request *historyservice.QueryWorkflowRequest,
-) (_ *historyservice.QueryWorkflowResponse, retError error) {
+func (h *Handler) QueryWorkflow(ctx context.Context, request *historyservice.QueryWorkflowRequest) (_ *historyservice.QueryWorkflowResponse, retError error) {
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
