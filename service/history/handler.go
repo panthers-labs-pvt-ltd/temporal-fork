@@ -2,54 +2,35 @@ package history
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"math"
 	"sync"
 	"sync/atomic"
+	"time"
 
-	"github.com/nexus-rpc/sdk-go/nexus"
-	"github.com/pborman/uuid"
 	"go.opentelemetry.io/otel/trace"
 	commonpb "go.temporal.io/api/common/v1"
-	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	enumsspb "go.temporal.io/server/api/enums/v1"
 	"go.temporal.io/server/api/historyservice/v1"
 	namespacespb "go.temporal.io/server/api/namespace/v1"
-	replicationspb "go.temporal.io/server/api/replication/v1"
-	tokenspb "go.temporal.io/server/api/token/v1"
-	"go.temporal.io/server/client/history"
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/archiver"
 	"go.temporal.io/server/common/clock"
 	"go.temporal.io/server/common/cluster"
-	"go.temporal.io/server/common/convert"
-	"go.temporal.io/server/common/definition"
-	"go.temporal.io/server/common/headers"
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/tag"
 	"go.temporal.io/server/common/membership"
 	"go.temporal.io/server/common/metrics"
 	"go.temporal.io/server/common/namespace"
-	commonnexus "go.temporal.io/server/common/nexus"
 	"go.temporal.io/server/common/persistence"
 	"go.temporal.io/server/common/persistence/serialization"
 	"go.temporal.io/server/common/persistence/visibility/manager"
 	"go.temporal.io/server/common/primitives/timestamp"
 	"go.temporal.io/server/common/searchattribute"
-	serviceerrors "go.temporal.io/server/common/serviceerror"
 	"go.temporal.io/server/common/tasktoken"
-	"go.temporal.io/server/components/nexusoperations"
-	"go.temporal.io/server/service/history/api"
-	"go.temporal.io/server/service/history/api/deletedlqtasks"
-	"go.temporal.io/server/service/history/api/forcedeleteworkflowexecution"
-	"go.temporal.io/server/service/history/api/getdlqtasks"
-	"go.temporal.io/server/service/history/api/listqueues"
 	"go.temporal.io/server/service/history/configs"
 	"go.temporal.io/server/service/history/consts"
 	"go.temporal.io/server/service/history/events"
-	"go.temporal.io/server/service/history/hsm"
 	"go.temporal.io/server/service/history/replication"
 	"go.temporal.io/server/service/history/shard"
 	"go.temporal.io/server/service/history/tasks"
@@ -91,6 +72,7 @@ type (
 		taskQueueManager             persistence.HistoryTaskQueueManager
 		taskCategoryRegistry         tasks.TaskCategoryRegistry
 		dlqMetricsEmitter            *persistence.DLQMetricsEmitter
+		healthSignalAggregator       HealthSignalAggregator
 
 		replicationTaskFetcherFactory    replication.TaskFetcherFactory
 		replicationTaskConverterProvider replication.SourceTaskConverterProvider
@@ -123,6 +105,7 @@ type (
 		TaskQueueManager             persistence.HistoryTaskQueueManager
 		TaskCategoryRegistry         tasks.TaskCategoryRegistry
 		DLQMetricsEmitter            *persistence.DLQMetricsEmitter
+		HealthSignalAggregator       HealthSignalAggregator
 
 		ReplicationTaskFetcherFactory   replication.TaskFetcherFactory
 		ReplicationTaskConverterFactory replication.SourceTaskConverterProvider
@@ -165,6 +148,7 @@ func (h *Handler) Start() {
 	h.eventNotifier.Start()
 	h.controller.Start()
 	h.dlqMetricsEmitter.Start()
+	h.healthSignalAggregator.Start()
 
 	h.startWG.Done()
 }
@@ -184,6 +168,7 @@ func (h *Handler) Stop() {
 	h.controller.Stop()
 	h.eventNotifier.Stop()
 	h.dlqMetricsEmitter.Stop()
+	h.healthSignalAggregator.Stop()
 }
 
 func (h *Handler) isStopped() bool {
@@ -197,6 +182,7 @@ func (h *Handler) DeepHealthCheck(
 	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
+	// Ensure that the hosts are marked internally as healthy.
 	status, err := h.healthServer.Check(ctx, &healthpb.HealthCheckRequest{Service: serviceName})
 	if err != nil {
 		return nil, err
@@ -205,7 +191,14 @@ func (h *Handler) DeepHealthCheck(
 		metrics.HistoryHostHealthGauge.With(h.metricsHandler).Record(float64(enumsspb.HEALTH_STATE_DECLINED_SERVING))
 		return &historyservice.DeepHealthCheckResponse{State: enumsspb.HEALTH_STATE_DECLINED_SERVING}, nil
 	}
+	// Check that the RPC latency doesn't exceed the threshold.
+	rpcLatency := h.healthSignalAggregator.AverageLatency()
+	if rpcLatency > h.config.HealthRPCLatencyFailure() {
+		metrics.HistoryHostHealthGauge.With(h.metricsHandler).Record(float64(enumsspb.HEALTH_STATE_NOT_SERVING))
+		return &historyservice.DeepHealthCheckResponse{State: enumsspb.HEALTH_STATE_NOT_SERVING}, nil
+	}
 
+	// Check if the persistence layer is healthy.
 	latency := h.persistenceHealthSignal.AverageLatency()
 	errRatio := h.persistenceHealthSignal.ErrorRatio()
 
@@ -237,6 +230,11 @@ func (h *Handler) IsWorkflowTaskValid(ctx context.Context, request *historyservi
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("IsWorkflowTaskValid", time.Since(startTime), retError)
+	}()
+
 	response, err := engine.IsWorkflowTaskValid(ctx, request)
 	if err != nil {
 		return nil, h.convertError(err)
@@ -264,6 +262,11 @@ func (h *Handler) IsActivityTaskValid(ctx context.Context, request *historyservi
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("IsActivityTaskValid", time.Since(startTime), retError)
+	}()
+
 	response, err := engine.IsActivityTaskValid(ctx, request)
 	if err != nil {
 		return nil, h.convertError(err)
@@ -271,8 +274,11 @@ func (h *Handler) IsActivityTaskValid(ctx context.Context, request *historyservi
 	return response, nil
 }
 
-func (h *Handler) RecordActivityTaskHeartbeat(ctx context.Context, request *historyservice.RecordActivityTaskHeartbeatRequest) (_ *historyservice.RecordActivityTaskHeartbeatResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) RecordActivityTaskHeartbeat(
+	ctx context.Context,
+	request *historyservice.RecordActivityTaskHeartbeatRequest,
+) (_ *historyservice.RecordActivityTaskHeartbeatResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
@@ -301,6 +307,11 @@ func (h *Handler) RecordActivityTaskHeartbeat(ctx context.Context, request *hist
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("RecordActivityTaskHeartbeat", time.Since(startTime), retError)
+	}()
+
 	response, err2 := engine.RecordActivityTaskHeartbeat(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -310,8 +321,11 @@ func (h *Handler) RecordActivityTaskHeartbeat(ctx context.Context, request *hist
 }
 
 // RecordActivityTaskStarted - Record Activity Task started.
-func (h *Handler) RecordActivityTaskStarted(ctx context.Context, request *historyservice.RecordActivityTaskStartedRequest) (_ *historyservice.RecordActivityTaskStartedResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) RecordActivityTaskStarted(
+	ctx context.Context,
+	request *historyservice.RecordActivityTaskStartedRequest,
+) (_ *historyservice.RecordActivityTaskStartedResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
@@ -330,6 +344,11 @@ func (h *Handler) RecordActivityTaskStarted(ctx context.Context, request *histor
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("RecordActivityTaskStarted", time.Since(startTime), retError)
+	}()
+
 	response, err := engine.RecordActivityTaskStarted(ctx, request)
 	if err != nil {
 		return nil, h.convertError(err)
@@ -342,8 +361,11 @@ func (h *Handler) RecordActivityTaskStarted(ctx context.Context, request *histor
 }
 
 // RecordWorkflowTaskStarted - Record Workflow Task started.
-func (h *Handler) RecordWorkflowTaskStarted(ctx context.Context, request *historyservice.RecordWorkflowTaskStartedRequest) (_ *historyservice.RecordWorkflowTaskStartedResponseWithRawHistory, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) RecordWorkflowTaskStarted(
+	ctx context.Context,
+	request *historyservice.RecordWorkflowTaskStartedRequest,
+) (_ *historyservice.RecordWorkflowTaskStartedResponseWithRawHistory, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
@@ -372,6 +394,11 @@ func (h *Handler) RecordWorkflowTaskStarted(ctx context.Context, request *histor
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("RecordWorkflowTaskStarted", time.Since(startTime), retError)
+	}()
+
 	response, err := engine.RecordWorkflowTaskStarted(ctx, request)
 	if err != nil {
 		return nil, h.convertError(err)
@@ -384,8 +411,11 @@ func (h *Handler) RecordWorkflowTaskStarted(ctx context.Context, request *histor
 }
 
 // RespondActivityTaskCompleted - records completion of an activity task
-func (h *Handler) RespondActivityTaskCompleted(ctx context.Context, request *historyservice.RespondActivityTaskCompletedRequest) (_ *historyservice.RespondActivityTaskCompletedResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) RespondActivityTaskCompleted(
+	ctx context.Context,
+	request *historyservice.RespondActivityTaskCompletedRequest,
+) (_ *historyservice.RespondActivityTaskCompletedResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
@@ -414,6 +444,11 @@ func (h *Handler) RespondActivityTaskCompleted(ctx context.Context, request *his
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("RespondActivityTaskCompleted", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.RespondActivityTaskCompleted(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -423,8 +458,11 @@ func (h *Handler) RespondActivityTaskCompleted(ctx context.Context, request *his
 }
 
 // RespondActivityTaskFailed - records failure of an activity task
-func (h *Handler) RespondActivityTaskFailed(ctx context.Context, request *historyservice.RespondActivityTaskFailedRequest) (_ *historyservice.RespondActivityTaskFailedResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) RespondActivityTaskFailed(
+	ctx context.Context,
+	request *historyservice.RespondActivityTaskFailedRequest,
+) (_ *historyservice.RespondActivityTaskFailedResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
@@ -453,6 +491,11 @@ func (h *Handler) RespondActivityTaskFailed(ctx context.Context, request *histor
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("RespondActivityTaskFailed", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.RespondActivityTaskFailed(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -462,8 +505,11 @@ func (h *Handler) RespondActivityTaskFailed(ctx context.Context, request *histor
 }
 
 // RespondActivityTaskCanceled - records failure of an activity task
-func (h *Handler) RespondActivityTaskCanceled(ctx context.Context, request *historyservice.RespondActivityTaskCanceledRequest) (_ *historyservice.RespondActivityTaskCanceledResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) RespondActivityTaskCanceled(
+	ctx context.Context,
+	request *historyservice.RespondActivityTaskCanceledRequest,
+) (_ *historyservice.RespondActivityTaskCanceledResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
@@ -492,6 +538,11 @@ func (h *Handler) RespondActivityTaskCanceled(ctx context.Context, request *hist
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("RespondActivityTaskCanceled", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.RespondActivityTaskCanceled(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -501,8 +552,11 @@ func (h *Handler) RespondActivityTaskCanceled(ctx context.Context, request *hist
 }
 
 // RespondWorkflowTaskCompleted - records completion of a workflow task
-func (h *Handler) RespondWorkflowTaskCompleted(ctx context.Context, request *historyservice.RespondWorkflowTaskCompletedRequest) (_ *historyservice.RespondWorkflowTaskCompletedResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) RespondWorkflowTaskCompleted(
+	ctx context.Context,
+	request *historyservice.RespondWorkflowTaskCompletedRequest,
+) (_ *historyservice.RespondWorkflowTaskCompletedResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
@@ -537,6 +591,11 @@ func (h *Handler) RespondWorkflowTaskCompleted(ctx context.Context, request *his
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("RespondWorkflowTaskCompleted", time.Since(startTime), retError)
+	}()
+
 	response, err2 := engine.RespondWorkflowTaskCompleted(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -546,8 +605,11 @@ func (h *Handler) RespondWorkflowTaskCompleted(ctx context.Context, request *his
 }
 
 // RespondWorkflowTaskFailed - failed response to workflow task
-func (h *Handler) RespondWorkflowTaskFailed(ctx context.Context, request *historyservice.RespondWorkflowTaskFailedRequest) (_ *historyservice.RespondWorkflowTaskFailedResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) RespondWorkflowTaskFailed(
+	ctx context.Context,
+	request *historyservice.RespondWorkflowTaskFailedRequest,
+) (_ *historyservice.RespondWorkflowTaskFailedResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
@@ -582,6 +644,11 @@ func (h *Handler) RespondWorkflowTaskFailed(ctx context.Context, request *histor
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("RespondWorkflowTaskFailed", time.Since(startTime), retError)
+	}()
+
 	err2 := engine.RespondWorkflowTaskFailed(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -591,8 +658,11 @@ func (h *Handler) RespondWorkflowTaskFailed(ctx context.Context, request *histor
 }
 
 // StartWorkflowExecution - creates a new workflow execution
-func (h *Handler) StartWorkflowExecution(ctx context.Context, request *historyservice.StartWorkflowExecutionRequest) (_ *historyservice.StartWorkflowExecutionResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) StartWorkflowExecution(
+	ctx context.Context,
+	request *historyservice.StartWorkflowExecutionRequest,
+) (_ *historyservice.StartWorkflowExecutionResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
@@ -611,6 +681,11 @@ func (h *Handler) StartWorkflowExecution(ctx context.Context, request *historyse
 	if err != nil {
 		return nil, h.convertError(err)
 	}
+
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("StartWorkflowExecution", time.Since(startTime), retError)
+	}()
 
 	response, err := engine.StartWorkflowExecution(ctx, request)
 	if err != nil {
@@ -743,8 +818,11 @@ func (h *Handler) GetShard(ctx context.Context, request *historyservice.GetShard
 }
 
 // RebuildMutableState attempts to rebuild mutable state according to persisted history events
-func (h *Handler) RebuildMutableState(ctx context.Context, request *historyservice.RebuildMutableStateRequest) (_ *historyservice.RebuildMutableStateResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) RebuildMutableState(
+	ctx context.Context,
+	request *historyservice.RebuildMutableStateRequest,
+) (_ *historyservice.RebuildMutableStateResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	if h.isStopped() {
@@ -767,6 +845,11 @@ func (h *Handler) RebuildMutableState(ctx context.Context, request *historyservi
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("RebuildMutableState", time.Since(startTime), retError)
+	}()
+
 	if err := engine.RebuildMutableState(ctx, namespaceID, &commonpb.WorkflowExecution{
 		WorkflowId: workflowExecution.WorkflowId,
 		RunId:      workflowExecution.RunId,
@@ -777,8 +860,11 @@ func (h *Handler) RebuildMutableState(ctx context.Context, request *historyservi
 }
 
 // ImportWorkflowExecution attempts to workflow execution according to persisted history events
-func (h *Handler) ImportWorkflowExecution(ctx context.Context, request *historyservice.ImportWorkflowExecutionRequest) (_ *historyservice.ImportWorkflowExecutionResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) ImportWorkflowExecution(
+	ctx context.Context,
+	request *historyservice.ImportWorkflowExecutionRequest,
+) (_ *historyservice.ImportWorkflowExecutionResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	if h.isStopped() {
@@ -811,6 +897,12 @@ func (h *Handler) ImportWorkflowExecution(ctx context.Context, request *historys
 	if !shardContext.GetClusterMetadata().IsGlobalNamespaceEnabled() {
 		return nil, serviceerror.NewUnimplemented("ImportWorkflowExecution must be used in global namespace mode")
 	}
+
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("ImportWorkflowExecution", time.Since(startTime), retError)
+	}()
+
 	resp, err := engine.ImportWorkflowExecution(ctx, request)
 	if err != nil {
 		return nil, h.convertError(err)
@@ -843,6 +935,11 @@ func (h *Handler) DescribeMutableState(ctx context.Context, request *historyserv
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("DescribeMutableState", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.DescribeMutableState(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -851,8 +948,11 @@ func (h *Handler) DescribeMutableState(ctx context.Context, request *historyserv
 }
 
 // GetMutableState - returns the id of the next event in the execution's history
-func (h *Handler) GetMutableState(ctx context.Context, request *historyservice.GetMutableStateRequest) (_ *historyservice.GetMutableStateResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) GetMutableState(
+	ctx context.Context,
+	request *historyservice.GetMutableStateRequest,
+) (_ *historyservice.GetMutableStateResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	if h.isStopped() {
@@ -874,6 +974,11 @@ func (h *Handler) GetMutableState(ctx context.Context, request *historyservice.G
 	if err != nil {
 		return nil, h.convertError(err)
 	}
+
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("GetMutableState", time.Since(startTime), retError)
+	}()
 
 	resp, err2 := engine.GetMutableState(ctx, request)
 	if err2 != nil {
@@ -883,8 +988,11 @@ func (h *Handler) GetMutableState(ctx context.Context, request *historyservice.G
 }
 
 // PollMutableState - returns the id of the next event in the execution's history
-func (h *Handler) PollMutableState(ctx context.Context, request *historyservice.PollMutableStateRequest) (_ *historyservice.PollMutableStateResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) PollMutableState(
+	ctx context.Context,
+	request *historyservice.PollMutableStateRequest,
+) (_ *historyservice.PollMutableStateResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	if h.isStopped() {
@@ -907,6 +1015,11 @@ func (h *Handler) PollMutableState(ctx context.Context, request *historyservice.
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("PollMutableState", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.PollMutableState(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -915,8 +1028,11 @@ func (h *Handler) PollMutableState(ctx context.Context, request *historyservice.
 }
 
 // DescribeWorkflowExecution returns information about the specified workflow execution.
-func (h *Handler) DescribeWorkflowExecution(ctx context.Context, request *historyservice.DescribeWorkflowExecutionRequest) (_ *historyservice.DescribeWorkflowExecutionResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) DescribeWorkflowExecution(
+	ctx context.Context,
+	request *historyservice.DescribeWorkflowExecutionRequest,
+) (_ *historyservice.DescribeWorkflowExecutionResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	if h.isStopped() {
@@ -939,6 +1055,11 @@ func (h *Handler) DescribeWorkflowExecution(ctx context.Context, request *histor
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("DescribeWorkflowExecution", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.DescribeWorkflowExecution(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -947,13 +1068,12 @@ func (h *Handler) DescribeWorkflowExecution(ctx context.Context, request *histor
 }
 
 // RequestCancelWorkflowExecution - requests cancellation of a workflow
-func (h *Handler) RequestCancelWorkflowExecution(ctx context.Context, request *historyservice.RequestCancelWorkflowExecutionRequest) (_ *historyservice.RequestCancelWorkflowExecutionResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) RequestCancelWorkflowExecution(
+	ctx context.Context,
+	request *historyservice.RequestCancelWorkflowExecutionRequest,
+) (_ *historyservice.RequestCancelWorkflowExecutionResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
 	if namespaceID == "" || request.CancelRequest.GetNamespace() == "" {
@@ -977,6 +1097,11 @@ func (h *Handler) RequestCancelWorkflowExecution(ctx context.Context, request *h
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("RequestCancelWorkflowExecution", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.RequestCancelWorkflowExecution(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -987,13 +1112,12 @@ func (h *Handler) RequestCancelWorkflowExecution(ctx context.Context, request *h
 
 // SignalWorkflowExecution is used to send a signal event to running workflow execution.  This results in
 // WorkflowExecutionSignaled event recorded in the history and a workflow task being created for the execution.
-func (h *Handler) SignalWorkflowExecution(ctx context.Context, request *historyservice.SignalWorkflowExecutionRequest) (_ *historyservice.SignalWorkflowExecutionResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) SignalWorkflowExecution(
+	ctx context.Context,
+	request *historyservice.SignalWorkflowExecutionRequest,
+) (_ *historyservice.SignalWorkflowExecutionResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
 	if namespaceID == "" {
@@ -1011,6 +1135,11 @@ func (h *Handler) SignalWorkflowExecution(ctx context.Context, request *historys
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("SignalWorkflowExecution", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.SignalWorkflowExecution(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -1024,13 +1153,12 @@ func (h *Handler) SignalWorkflowExecution(ctx context.Context, request *historys
 // and a workflow task being created for the execution.
 // If workflow is not running or not found, this results in WorkflowExecutionStarted and WorkflowExecutionSignaled
 // event recorded in history, and a workflow task being created for the execution
-func (h *Handler) SignalWithStartWorkflowExecution(ctx context.Context, request *historyservice.SignalWithStartWorkflowExecutionRequest) (_ *historyservice.SignalWithStartWorkflowExecutionResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) SignalWithStartWorkflowExecution(
+	ctx context.Context,
+	request *historyservice.SignalWithStartWorkflowExecutionRequest,
+) (_ *historyservice.SignalWithStartWorkflowExecutionResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
 	if namespaceID == "" {
@@ -1047,6 +1175,11 @@ func (h *Handler) SignalWithStartWorkflowExecution(ctx context.Context, request 
 	if err != nil {
 		return nil, h.convertError(err)
 	}
+
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("SignalWithStartWorkflowExecution", time.Since(startTime), retError)
+	}()
 
 	for {
 		resp, err2 := engine.SignalWithStartWorkflowExecution(ctx, request)
@@ -1081,8 +1214,11 @@ func (h *Handler) SignalWithStartWorkflowExecution(ctx context.Context, request 
 
 // RemoveSignalMutableState is used to remove a signal request ID that was previously recorded.  This is currently
 // used to clean execution info when signal workflow task finished.
-func (h *Handler) RemoveSignalMutableState(ctx context.Context, request *historyservice.RemoveSignalMutableStateRequest) (_ *historyservice.RemoveSignalMutableStateResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) RemoveSignalMutableState(
+	ctx context.Context,
+	request *historyservice.RemoveSignalMutableStateRequest,
+) (_ *historyservice.RemoveSignalMutableStateResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	if h.isStopped() {
@@ -1105,6 +1241,11 @@ func (h *Handler) RemoveSignalMutableState(ctx context.Context, request *history
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("RemoveSignalMutableState", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.RemoveSignalMutableState(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -1115,13 +1256,12 @@ func (h *Handler) RemoveSignalMutableState(ctx context.Context, request *history
 
 // TerminateWorkflowExecution terminates an existing workflow execution by recording WorkflowExecutionTerminated event
 // in the history and immediately terminating the execution instance.
-func (h *Handler) TerminateWorkflowExecution(ctx context.Context, request *historyservice.TerminateWorkflowExecutionRequest) (_ *historyservice.TerminateWorkflowExecutionResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) TerminateWorkflowExecution(
+	ctx context.Context,
+	request *historyservice.TerminateWorkflowExecutionRequest,
+) (_ *historyservice.TerminateWorkflowExecutionResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
 	if namespaceID == "" {
@@ -1139,6 +1279,11 @@ func (h *Handler) TerminateWorkflowExecution(ctx context.Context, request *histo
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("TerminateWorkflowExecution", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.TerminateWorkflowExecution(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -1147,13 +1292,12 @@ func (h *Handler) TerminateWorkflowExecution(ctx context.Context, request *histo
 	return resp, nil
 }
 
-func (h *Handler) DeleteWorkflowExecution(ctx context.Context, request *historyservice.DeleteWorkflowExecutionRequest) (_ *historyservice.DeleteWorkflowExecutionResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) DeleteWorkflowExecution(
+	ctx context.Context,
+	request *historyservice.DeleteWorkflowExecutionRequest,
+) (_ *historyservice.DeleteWorkflowExecutionResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
 	if namespaceID == "" {
@@ -1176,6 +1320,11 @@ func (h *Handler) DeleteWorkflowExecution(ctx context.Context, request *historys
 		tag.WorkflowID(workflowExecution.GetWorkflowId()),
 		tag.WorkflowRunID(workflowExecution.GetRunId()))
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("DeleteWorkflowExecution", time.Since(startTime), retError)
+	}()
+
 	resp, err := engine.DeleteWorkflowExecution(ctx, request)
 	if err != nil {
 		return nil, h.convertError(err)
@@ -1185,13 +1334,12 @@ func (h *Handler) DeleteWorkflowExecution(ctx context.Context, request *historys
 
 // ResetWorkflowExecution reset an existing workflow execution
 // in the history and immediately terminating the execution instance.
-func (h *Handler) ResetWorkflowExecution(ctx context.Context, request *historyservice.ResetWorkflowExecutionRequest) (_ *historyservice.ResetWorkflowExecutionResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) ResetWorkflowExecution(
+	ctx context.Context,
+	request *historyservice.ResetWorkflowExecutionRequest,
+) (_ *historyservice.ResetWorkflowExecutionResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
 	if namespaceID == "" {
@@ -1209,6 +1357,11 @@ func (h *Handler) ResetWorkflowExecution(ctx context.Context, request *historyse
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("ResetWorkflowExecution", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.ResetWorkflowExecution(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -1219,13 +1372,12 @@ func (h *Handler) ResetWorkflowExecution(ctx context.Context, request *historyse
 
 // UpdateWorkflowExecutionOptions updates the options of a workflow execution.
 // Can be used to set and unset versioning behavior override.
-func (h *Handler) UpdateWorkflowExecutionOptions(ctx context.Context, request *historyservice.UpdateWorkflowExecutionOptionsRequest) (_ *historyservice.UpdateWorkflowExecutionOptionsResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) UpdateWorkflowExecutionOptions(
+	ctx context.Context,
+	request *historyservice.UpdateWorkflowExecutionOptionsRequest,
+) (_ *historyservice.UpdateWorkflowExecutionOptionsResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
 
 	namespaceID := namespace.ID(request.GetNamespaceId())
 	if namespaceID == "" {
@@ -1243,6 +1395,11 @@ func (h *Handler) UpdateWorkflowExecutionOptions(ctx context.Context, request *h
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("UpdateWorkflowExecutionOptions", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.UpdateWorkflowExecutionOptions(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -1252,8 +1409,11 @@ func (h *Handler) UpdateWorkflowExecutionOptions(ctx context.Context, request *h
 }
 
 // QueryWorkflow queries a workflow.
-func (h *Handler) QueryWorkflow(ctx context.Context, request *historyservice.QueryWorkflowRequest) (_ *historyservice.QueryWorkflowResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
+func (h *Handler) QueryWorkflow(
+	ctx context.Context,
+	request *historyservice.QueryWorkflowRequest,
+) (_ *historyservice.QueryWorkflowResponse, retError error) {
+	defer log.CapturePanic(h.logger, &retError)
 	h.startWG.Wait()
 
 	if h.isStopped() {
@@ -1275,6 +1435,11 @@ func (h *Handler) QueryWorkflow(ctx context.Context, request *historyservice.Que
 		return nil, h.convertError(err)
 	}
 
+	startTime := h.timeSource.Now()
+	defer func() {
+		h.healthSignalAggregator.Record("QueryWorkflow", time.Since(startTime), retError)
+	}()
+
 	resp, err2 := engine.QueryWorkflow(ctx, request)
 	if err2 != nil {
 		return nil, h.convertError(err2)
@@ -1283,1320 +1448,12 @@ func (h *Handler) QueryWorkflow(ctx context.Context, request *historyservice.Que
 	return resp, nil
 }
 
-// ScheduleWorkflowTask is used for creating a workflow task for already started workflow execution.  This is mainly
-// used by transfer queue processor during the processing of StartChildWorkflowExecution task, where it first starts
-// child execution without creating the workflow task and then calls this API after updating the mutable state of
-// parent execution.
-func (h *Handler) ScheduleWorkflowTask(ctx context.Context, request *historyservice.ScheduleWorkflowTaskRequest) (_ *historyservice.ScheduleWorkflowTaskResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	if namespaceID == "" {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-
-	if request.WorkflowExecution == nil {
-		return nil, h.convertError(errWorkflowExecutionNotSet)
-	}
-
-	workflowExecution := request.WorkflowExecution
-	workflowID := workflowExecution.GetWorkflowId()
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	err2 := engine.ScheduleWorkflowTask(ctx, request)
-	if err2 != nil {
-		return nil, h.convertError(err2)
-	}
-
-	return &historyservice.ScheduleWorkflowTaskResponse{}, nil
-}
-
-func (h *Handler) VerifyFirstWorkflowTaskScheduled(
-	ctx context.Context,
-	request *historyservice.VerifyFirstWorkflowTaskScheduledRequest,
-) (_ *historyservice.VerifyFirstWorkflowTaskScheduledResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	if namespaceID == "" {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-
-	if request.WorkflowExecution == nil {
-		return nil, h.convertError(errWorkflowExecutionNotSet)
-	}
-
-	workflowExecution := request.WorkflowExecution
-	workflowID := workflowExecution.GetWorkflowId()
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	err2 := engine.VerifyFirstWorkflowTaskScheduled(ctx, request)
-	if err2 != nil {
-		return nil, h.convertError(err2)
-	}
-
-	return &historyservice.VerifyFirstWorkflowTaskScheduledResponse{}, nil
-}
-
-// RecordChildExecutionCompleted is used for reporting the completion of child workflow execution to parent.
-// This is mainly called by transfer queue processor during the processing of DeleteExecution task.
-func (h *Handler) RecordChildExecutionCompleted(ctx context.Context, request *historyservice.RecordChildExecutionCompletedRequest) (_ *historyservice.RecordChildExecutionCompletedResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	if namespaceID == "" {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-
-	if request.GetParentExecution() == nil {
-		return nil, h.convertError(errWorkflowExecutionNotSet)
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, request.GetParentExecution().WorkflowId)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	resp, err2 := engine.RecordChildExecutionCompleted(ctx, request)
-	if err2 != nil {
-		return nil, h.convertError(err2)
-	}
-
-	return resp, nil
-}
-
-func (h *Handler) VerifyChildExecutionCompletionRecorded(
-	ctx context.Context,
-	request *historyservice.VerifyChildExecutionCompletionRecordedRequest,
-) (_ *historyservice.VerifyChildExecutionCompletionRecordedResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	if namespaceID == "" {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-
-	if request.ParentExecution == nil {
-		return nil, h.convertError(errWorkflowExecutionNotSet)
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, request.ParentExecution.GetWorkflowId())
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	resp, err2 := engine.VerifyChildExecutionCompletionRecorded(ctx, request)
-	if err2 != nil {
-		return nil, h.convertError(err2)
-	}
-
-	return resp, nil
-}
-
-// ResetStickyTaskQueue reset the volatile information in mutable state of a given workflow.
-// Volatile information are the information related to client, such as:
-// 1. StickyTaskQueue
-// 2. StickyScheduleToStartTimeout
-func (h *Handler) ResetStickyTaskQueue(ctx context.Context, request *historyservice.ResetStickyTaskQueueRequest) (_ *historyservice.ResetStickyTaskQueueResponse, retError error) {
-
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	if namespaceID == "" {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-
-	workflowID := request.Execution.GetWorkflowId()
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	resp, err := engine.ResetStickyTaskQueue(ctx, request)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	return resp, nil
-}
-
-// ReplicateEventsV2 is called by processor to replicate history events for passive namespaces
-func (h *Handler) ReplicateEventsV2(ctx context.Context, request *historyservice.ReplicateEventsV2Request) (_ *historyservice.ReplicateEventsV2Response, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	if err := api.ValidateReplicationConfig(h.clusterMetadata); err != nil {
-		return nil, err
-	}
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	if namespaceID == "" {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-
-	workflowExecution := request.WorkflowExecution
-	workflowID := workflowExecution.GetWorkflowId()
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	err2 := engine.ReplicateEventsV2(ctx, request)
-	if err2 == nil || errors.Is(err2, consts.ErrDuplicate) {
-		return &historyservice.ReplicateEventsV2Response{}, nil
-	}
-	return nil, h.convertError(err2)
-}
-
-// ReplicateWorkflowState is called by processor to replicate workflow state for passive namespaces
-func (h *Handler) ReplicateWorkflowState(
-	ctx context.Context,
-	request *historyservice.ReplicateWorkflowStateRequest,
-) (_ *historyservice.ReplicateWorkflowStateResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(
-		namespace.ID(request.GetWorkflowState().GetExecutionInfo().GetNamespaceId()),
-		request.GetWorkflowState().GetExecutionInfo().GetWorkflowId(),
-	)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	err = engine.ReplicateWorkflowState(ctx, request)
-	if err == nil || errors.Is(err, consts.ErrDuplicate) {
-		return &historyservice.ReplicateWorkflowStateResponse{}, nil
-	}
-	return nil, err
-}
-
-// SyncShardStatus is called by processor to sync history shard information from another cluster
-func (h *Handler) SyncShardStatus(ctx context.Context, request *historyservice.SyncShardStatusRequest) (_ *historyservice.SyncShardStatusResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	if request.GetSourceCluster() == "" {
-		return nil, h.convertError(errSourceClusterNotSet)
-	}
-
-	if request.GetShardId() == 0 {
-		return nil, h.convertError(errShardIDNotSet)
-	}
-
-	if timestamp.TimeValue(request.GetStatusTime()).IsZero() {
-		return nil, h.convertError(errTimestampNotSet)
-	}
-
-	shardContext, err := h.controller.GetShardByID(request.GetShardId())
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	err = engine.SyncShardStatus(ctx, request)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	return &historyservice.SyncShardStatusResponse{}, nil
-}
-
-// SyncActivity is called by processor to sync activity
-func (h *Handler) SyncActivity(ctx context.Context, request *historyservice.SyncActivityRequest) (_ *historyservice.SyncActivityResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	if err := api.ValidateReplicationConfig(h.clusterMetadata); err != nil {
-		return nil, err
-	}
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	if request.GetNamespaceId() == "" || uuid.Parse(request.GetNamespaceId()) == nil {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-
-	if request.GetWorkflowId() == "" {
-		return nil, h.convertError(errWorkflowIDNotSet)
-	}
-
-	if request.GetRunId() == "" || uuid.Parse(request.GetRunId()) == nil {
-		return nil, h.convertError(errRunIDNotValid)
-	}
-
-	workflowID := request.GetWorkflowId()
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	err = engine.SyncActivity(ctx, request)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	return &historyservice.SyncActivityResponse{}, nil
-}
-
-// GetReplicationMessages is called by remote peers to get replicated messages for cross DC replication
-func (h *Handler) GetReplicationMessages(ctx context.Context, request *historyservice.GetReplicationMessagesRequest) (_ *historyservice.GetReplicationMessagesResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-	if err := api.ValidateReplicationConfig(h.clusterMetadata); err != nil {
-		return nil, err
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(len(request.Tokens))
-	result := new(sync.Map)
-
-	for _, token := range request.Tokens {
-		go func(token *replicationspb.ReplicationToken) {
-			defer wg.Done()
-
-			shardContext, err := h.controller.GetShardByID(token.GetShardId())
-			if err != nil {
-				h.logger.Warn("History engine not found for shard", tag.Error(err))
-				return
-			}
-			engine, err := shardContext.GetEngine(ctx)
-			if err != nil {
-				h.logger.Warn("History engine not found for shard", tag.Error(err))
-				return
-			}
-
-			replicationTasks, err := engine.GetReplicationMessages(
-				ctx,
-				request.GetClusterName(),
-				token.GetLastProcessedMessageId(),
-				timestamp.TimeValue(token.LastProcessedVisibilityTime),
-				token.GetLastRetrievedMessageId(),
-			)
-			if err != nil {
-				h.logger.Warn("Failed to get replication tasks for shard", tag.Error(err))
-				return
-			}
-
-			result.Store(token.GetShardId(), replicationTasks)
-		}(token)
-	}
-
-	wg.Wait()
-
-	messagesByShard := make(map[int32]*replicationspb.ReplicationMessages)
-	result.Range(func(key, value interface{}) bool {
-		shardID := key.(int32)
-		messagesByShard[shardID] = value.(*replicationspb.ReplicationMessages)
-		return true
-	})
-
-	h.logger.Debug("GetReplicationMessages succeeded.")
-
-	return &historyservice.GetReplicationMessagesResponse{ShardMessages: messagesByShard}, nil
-}
-
-// GetDLQReplicationMessages is called by remote peers to get replicated messages for DLQ merging
-func (h *Handler) GetDLQReplicationMessages(ctx context.Context, request *historyservice.GetDLQReplicationMessagesRequest) (_ *historyservice.GetDLQReplicationMessagesResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-	if err := api.ValidateReplicationConfig(h.clusterMetadata); err != nil {
-		return nil, err
-	}
-
-	taskInfoPerShard := map[int32][]*replicationspb.ReplicationTaskInfo{}
-	// do batch based on workflow ID and run ID
-	for _, taskInfo := range request.GetTaskInfos() {
-		shardID := h.config.GetShardID(
-			namespace.ID(taskInfo.GetNamespaceId()),
-			taskInfo.GetWorkflowId(),
-		)
-		if _, ok := taskInfoPerShard[shardID]; !ok {
-			taskInfoPerShard[shardID] = []*replicationspb.ReplicationTaskInfo{}
-		}
-		taskInfoPerShard[shardID] = append(taskInfoPerShard[shardID], taskInfo)
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(len(taskInfoPerShard))
-	tasksChan := make(chan *replicationspb.ReplicationTask, len(request.GetTaskInfos()))
-	handleTaskInfoPerShard := func(taskInfos []*replicationspb.ReplicationTaskInfo) {
-		defer wg.Done()
-		if len(taskInfos) == 0 {
-			return
-		}
-
-		shardContext, err := h.controller.GetShardByNamespaceWorkflow(
-			namespace.ID(taskInfos[0].GetNamespaceId()),
-			taskInfos[0].GetWorkflowId(),
-		)
-		if err != nil {
-			h.logger.Warn("History engine not found for workflow ID.", tag.Error(err))
-			return
-		}
-		engine, err := shardContext.GetEngine(ctx)
-		if err != nil {
-			h.logger.Warn("History engine not found for workflow ID.", tag.Error(err))
-			return
-		}
-
-		dlqTasks, err := engine.GetDLQReplicationMessages(
-			ctx,
-			taskInfos,
-		)
-		if err != nil {
-			h.logger.Error("Failed to get dlq replication tasks.", tag.Error(err))
-			return
-		}
-
-		for _, t := range dlqTasks {
-			tasksChan <- t
-		}
-	}
-
-	for _, replicationTaskInfos := range taskInfoPerShard {
-		go handleTaskInfoPerShard(replicationTaskInfos)
-	}
-	wg.Wait()
-	close(tasksChan)
-
-	replicationTasks := make([]*replicationspb.ReplicationTask, 0, len(tasksChan))
-	for t := range tasksChan {
-		replicationTasks = append(replicationTasks, t)
-	}
-	return &historyservice.GetDLQReplicationMessagesResponse{
-		ReplicationTasks: replicationTasks,
-	}, nil
-}
-
-// ReapplyEvents applies stale events to the current workflow and the current run
-func (h *Handler) ReapplyEvents(ctx context.Context, request *historyservice.ReapplyEventsRequest) (_ *historyservice.ReapplyEventsResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	workflowID := request.GetRequest().GetWorkflowExecution().GetWorkflowId()
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	// deserialize history event object
-	historyEvents, err := h.payloadSerializer.DeserializeEvents(&commonpb.DataBlob{
-		EncodingType: enumspb.ENCODING_TYPE_PROTO3,
-		Data:         request.GetRequest().GetEvents().GetData(),
-	})
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	execution := request.GetRequest().GetWorkflowExecution()
-	if err := engine.ReapplyEvents(
-		ctx,
-		namespace.ID(request.GetNamespaceId()),
-		execution.GetWorkflowId(),
-		execution.GetRunId(),
-		historyEvents,
-	); err != nil {
-		return nil, h.convertError(err)
-	}
-	return &historyservice.ReapplyEventsResponse{}, nil
-}
-
-func (h *Handler) GetDLQMessages(ctx context.Context, request *historyservice.GetDLQMessagesRequest) (_ *historyservice.GetDLQMessagesResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByID(request.GetShardId())
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	resp, err := engine.GetDLQMessages(ctx, request)
-	if err != nil {
-		err = h.convertError(err)
-		return nil, err
-	}
-
-	return resp, nil
-}
-
-func (h *Handler) PurgeDLQMessages(ctx context.Context, request *historyservice.PurgeDLQMessagesRequest) (_ *historyservice.PurgeDLQMessagesResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByID(request.GetShardId())
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	resp, err := engine.PurgeDLQMessages(ctx, request)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	return resp, nil
-}
-
-func (h *Handler) MergeDLQMessages(ctx context.Context, request *historyservice.MergeDLQMessagesRequest) (_ *historyservice.MergeDLQMessagesResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByID(request.GetShardId())
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	resp, err := engine.MergeDLQMessages(ctx, request)
-	if err != nil {
-		err = h.convertError(err)
-		return nil, err
-	}
-
-	return resp, nil
-}
-
-func (h *Handler) RefreshWorkflowTasks(ctx context.Context, request *historyservice.RefreshWorkflowTasksRequest) (_ *historyservice.RefreshWorkflowTasksResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	execution := request.GetRequest().GetExecution()
-	workflowID := execution.GetWorkflowId()
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	err = engine.RefreshWorkflowTasks(
-		ctx,
-		namespaceID,
-		&commonpb.WorkflowExecution{
-			WorkflowId: execution.WorkflowId,
-			RunId:      execution.RunId,
-		},
-	)
-
-	if err != nil {
-		err = h.convertError(err)
-		return nil, err
-	}
-
-	return &historyservice.RefreshWorkflowTasksResponse{}, nil
-}
-
-func (h *Handler) GenerateLastHistoryReplicationTasks(
-	ctx context.Context,
-	request *historyservice.GenerateLastHistoryReplicationTasksRequest,
-) (_ *historyservice.GenerateLastHistoryReplicationTasksResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	workflowID := request.GetExecution().GetWorkflowId()
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	resp, err := engine.GenerateLastHistoryReplicationTasks(ctx, request)
-
-	if err != nil {
-		err = h.convertError(err)
-		return nil, err
-	}
-
-	return resp, nil
-}
-
-func (h *Handler) GetReplicationStatus(
-	ctx context.Context,
-	request *historyservice.GetReplicationStatusRequest,
-) (_ *historyservice.GetReplicationStatusResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-	if err := api.ValidateReplicationConfig(h.clusterMetadata); err != nil {
-		return nil, err
-	}
-
-	resp := &historyservice.GetReplicationStatusResponse{}
-	for _, shardID := range h.controller.ShardIDs() {
-		shardContext, err := h.controller.GetShardByID(shardID)
-		if err != nil {
-			return nil, h.convertError(err)
-		}
-		engine, err := shardContext.GetEngine(ctx)
-		if err != nil {
-			return nil, h.convertError(err)
-		}
-
-		status, err := engine.GetReplicationStatus(ctx, request)
-		if err != nil {
-			return nil, err
-		}
-		resp.Shards = append(resp.Shards, status)
-	}
-	return resp, nil
-}
-
-func (h *Handler) DeleteWorkflowVisibilityRecord(
-	ctx context.Context,
-	request *historyservice.DeleteWorkflowVisibilityRecordRequest,
-) (_ *historyservice.DeleteWorkflowVisibilityRecordResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	if namespaceID == "" {
-		return nil, errNamespaceNotSet
-	}
-
-	if request.Execution == nil {
-		return nil, errWorkflowExecutionNotSet
-	}
-
-	// NOTE: the deletion is best effort, for sql visibility implementation,
-	// we can't guarantee there's no update or record close request for this workflow since
-	// visibility queue processing is async. Operator can call this api (through admin workflow
-	// delete) again to delete again if this happens.
-	// For ES implementation, we used max int64 as the TaskID (version) to make sure deletion is
-	// the last operation applied for this workflow
-	err := h.persistenceVisibilityManager.DeleteWorkflowExecution(ctx, &manager.VisibilityDeleteWorkflowExecutionRequest{
-		NamespaceID: namespaceID,
-		WorkflowID:  request.Execution.GetWorkflowId(),
-		RunID:       request.Execution.GetRunId(),
-		TaskID:      math.MaxInt64,
-	})
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	return &historyservice.DeleteWorkflowVisibilityRecordResponse{}, nil
-}
-
-func (h *Handler) UpdateWorkflowExecution(
-	ctx context.Context,
-	request *historyservice.UpdateWorkflowExecutionRequest,
-) (_ *historyservice.UpdateWorkflowExecutionResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(
-		namespace.ID(request.GetNamespaceId()),
-		request.GetRequest().GetWorkflowExecution().GetWorkflowId(),
-	)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	return engine.UpdateWorkflowExecution(ctx, request)
-}
-
-func (h *Handler) PollWorkflowExecutionUpdate(
-	ctx context.Context,
-	request *historyservice.PollWorkflowExecutionUpdateRequest,
-) (_ *historyservice.PollWorkflowExecutionUpdateResponse, retErr error) {
-	defer log.CapturePanic(h.logger, &retErr)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(
-		namespace.ID(request.GetNamespaceId()),
-		request.GetRequest().GetUpdateRef().GetWorkflowExecution().GetWorkflowId(),
-	)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	return engine.PollWorkflowExecutionUpdate(ctx, request)
-}
-
-func (h *Handler) StreamWorkflowReplicationMessages(
-	server historyservice.HistoryService_StreamWorkflowReplicationMessagesServer,
-) (retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return errShuttingDown
-	}
-
-	getter := headers.NewGRPCHeaderGetter(server.Context())
-	clientClusterShardID, serverClusterShardID, err := history.DecodeClusterShardMD(getter)
-	if err != nil {
-		return err
-	}
-	if serverClusterShardID.ClusterID != int32(h.clusterMetadata.GetClusterID()) {
-		return serviceerror.NewInvalidArgument(fmt.Sprintf(
-			"wrong cluster: target: %v, current: %v",
-			serverClusterShardID.ClusterID,
-			h.clusterMetadata.GetClusterID(),
-		))
-	}
-	shardContext, err := h.controller.GetShardByID(serverClusterShardID.ShardID)
-	if err != nil {
-		return h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(server.Context())
-	if err != nil {
-		return h.convertError(err)
-	}
-	allClusterInfo := shardContext.GetClusterMetadata().GetAllClusterInfo()
-	clientClusterName, clientShardCount, err := replication.ClusterIDToClusterNameShardCount(allClusterInfo, clientClusterShardID.ClusterID)
-	if err != nil {
-		return h.convertError(err)
-	}
-	_, serverShardCount, err := replication.ClusterIDToClusterNameShardCount(allClusterInfo, int32(shardContext.GetClusterMetadata().GetClusterID()))
-	if err != nil {
-		return h.convertError(err)
-	}
-	err = common.VerifyShardIDMapping(clientShardCount, serverShardCount, clientClusterShardID.ShardID, serverClusterShardID.ShardID)
-	if err != nil {
-		return h.convertError(err)
-	}
-	streamSender := replication.NewStreamSender(
-		server,
-		shardContext,
-		engine,
-		h.replicationTaskConverterProvider(
-			engine,
-			shardContext,
-			clientClusterName,
-			serialization.NewSerializer(),
-		),
-		clientClusterName,
-		clientShardCount,
-		replication.NewClusterShardKey(clientClusterShardID.ClusterID, clientClusterShardID.ShardID),
-		replication.NewClusterShardKey(serverClusterShardID.ClusterID, serverClusterShardID.ShardID),
-		h.config,
-	)
-	streamSender.Start()
-	h.streamReceiverMonitor.RegisterInboundStream(streamSender)
-	defer streamSender.Stop()
-	streamSender.Wait()
-	return nil
-}
-
-func (h *Handler) GetWorkflowExecutionHistory(
-	ctx context.Context,
-	request *historyservice.GetWorkflowExecutionHistoryRequest,
-) (_ *historyservice.GetWorkflowExecutionHistoryResponseWithRaw, retErr error) {
-	defer log.CapturePanic(h.logger, &retErr)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(
-		namespace.ID(request.GetNamespaceId()),
-		request.Request.GetExecution().GetWorkflowId(),
-	)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	return engine.GetWorkflowExecutionHistory(ctx, request)
-}
-
-func (h *Handler) GetWorkflowExecutionHistoryReverse(
-	ctx context.Context,
-	request *historyservice.GetWorkflowExecutionHistoryReverseRequest,
-) (_ *historyservice.GetWorkflowExecutionHistoryReverseResponse, retErr error) {
-	defer log.CapturePanic(h.logger, &retErr)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(
-		namespace.ID(request.GetNamespaceId()),
-		request.GetRequest().GetExecution().GetWorkflowId(),
-	)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	return engine.GetWorkflowExecutionHistoryReverse(ctx, request)
-}
-
-func (h *Handler) GetWorkflowExecutionRawHistory(
-	ctx context.Context,
-	request *historyservice.GetWorkflowExecutionRawHistoryRequest,
-) (_ *historyservice.GetWorkflowExecutionRawHistoryResponse, retErr error) {
-	defer log.CapturePanic(h.logger, &retErr)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(
-		namespace.ID(request.GetNamespaceId()),
-		request.GetRequest().GetExecution().GetWorkflowId(),
-	)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	return engine.GetWorkflowExecutionRawHistory(ctx, request)
-}
-
-func (h *Handler) GetWorkflowExecutionRawHistoryV2(
-	ctx context.Context,
-	request *historyservice.GetWorkflowExecutionRawHistoryV2Request,
-) (_ *historyservice.GetWorkflowExecutionRawHistoryV2Response, retErr error) {
-	defer log.CapturePanic(h.logger, &retErr)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(
-		namespace.ID(request.GetNamespaceId()),
-		request.GetRequest().GetExecution().GetWorkflowId(),
-	)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	return engine.GetWorkflowExecutionRawHistoryV2(ctx, request)
-}
-
-func (h *Handler) ForceDeleteWorkflowExecution(
-	ctx context.Context,
-	request *historyservice.ForceDeleteWorkflowExecutionRequest,
-) (_ *historyservice.ForceDeleteWorkflowExecutionResponse, retErr error) {
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	err := api.ValidateNamespaceUUID(namespaceID)
-	if err != nil {
-		return nil, err
-	}
-	shardID := common.WorkflowIDToHistoryShard(
-		namespaceID.String(),
-		request.Request.Execution.WorkflowId,
-		h.config.NumberOfShards,
-	)
-
-	workflowExecution := request.GetRequest().GetExecution()
-	h.logger.Info("ForceDeleteWorkflowExecution requested",
-		tag.WorkflowNamespaceID(request.GetNamespaceId()),
-		tag.WorkflowID(workflowExecution.GetWorkflowId()),
-		tag.WorkflowRunID(workflowExecution.GetRunId()))
-
-	return forcedeleteworkflowexecution.Invoke(
-		ctx,
-		request,
-		shardID,
-		h.persistenceExecutionManager,
-		h.persistenceVisibilityManager,
-		h.logger,
-	)
-}
-
-func (h *Handler) GetDLQTasks(
-	ctx context.Context,
-	request *historyservice.GetDLQTasksRequest,
-) (*historyservice.GetDLQTasksResponse, error) {
-	return getdlqtasks.Invoke(ctx, h.taskQueueManager, h.taskCategoryRegistry, request)
-}
-
-func (h *Handler) DeleteDLQTasks(
-	ctx context.Context,
-	request *historyservice.DeleteDLQTasksRequest,
-) (*historyservice.DeleteDLQTasksResponse, error) {
-	return deletedlqtasks.Invoke(ctx, h.taskQueueManager, request, h.taskCategoryRegistry)
-}
-
-// AddTasks calls the [addtasks.Invoke] API with a [shard.Context] for the given shardID.
-func (h *Handler) AddTasks(
-	ctx context.Context,
-	request *historyservice.AddTasksRequest,
-) (*historyservice.AddTasksResponse, error) {
-	shardContext, err := h.controller.GetShardByID(request.ShardId)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	return engine.AddTasks(ctx, request)
-}
-
-func (h *Handler) ListQueues(
-	ctx context.Context,
-	request *historyservice.ListQueuesRequest,
-) (*historyservice.ListQueuesResponse, error) {
-	return listqueues.Invoke(ctx, h.taskQueueManager, request)
-}
-
-func (h *Handler) ListTasks(
-	ctx context.Context,
-	request *historyservice.ListTasksRequest,
-) (_ *historyservice.ListTasksResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByID(request.Request.GetShardId())
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	resp, err := engine.ListTasks(ctx, request)
-	if err != nil {
-		err = h.convertError(err)
-		return nil, err
-	}
-
-	return resp, nil
-}
-
-func (h *Handler) CompleteNexusOperation(ctx context.Context, request *historyservice.CompleteNexusOperationRequest) (_ *historyservice.CompleteNexusOperationResponse, retErr error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retErr)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespace.ID(request.Completion.NamespaceId), request.Completion.WorkflowId)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	ref := hsm.Ref{
-		WorkflowKey:     definition.NewWorkflowKey(request.Completion.NamespaceId, request.Completion.WorkflowId, request.Completion.RunId),
-		StateMachineRef: request.Completion.Ref,
-	}
-	var opErr *nexus.OperationError
-	if request.State != string(nexus.OperationStateSucceeded) {
-		opErr = &nexus.OperationError{
-			State: nexus.OperationState(request.GetState()),
-			Cause: &nexus.FailureError{
-				Failure: commonnexus.ProtoFailureToNexusFailure(request.GetFailure()),
-			},
-		}
-	}
-	err = nexusoperations.CompletionHandler(
-		ctx,
-		engine.StateMachineEnvironment(metrics.OperationTag(metrics.HistoryCompleteNexusOperationScope)),
-		ref,
-		request.Completion.RequestId,
-		request.OperationToken,
-		request.StartTime,
-		request.Links,
-		request.GetSuccess(),
-		opErr,
-	)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	return &historyservice.CompleteNexusOperationResponse{}, nil
-}
-
-// convertError is a helper method to convert ShardOwnershipLostError from persistence layer returned by various
-// HistoryEngine API calls to ShardOwnershipLost error return by HistoryService for client to be redirected to the
-// correct shard.
+// convertError is a placeholder for error conversion logic.
 func (h *Handler) convertError(err error) error {
-	switch err := err.(type) {
-	case *persistence.ShardOwnershipLostError:
-		hostInfo := h.hostInfoProvider.HostInfo()
-		if ownerInfo, err := h.historyServiceResolver.Lookup(convert.Int32ToString(err.ShardID)); err == nil {
-			return serviceerrors.NewShardOwnershipLost(ownerInfo.GetAddress(), hostInfo.GetAddress())
-		}
-		return serviceerrors.NewShardOwnershipLost("", hostInfo.GetAddress())
-	case *persistence.AppendHistoryTimeoutError:
-		return serviceerror.NewUnavailable(err.Msg)
-	case *persistence.WorkflowConditionFailedError:
-		return serviceerror.NewUnavailable(err.Msg)
-	case *persistence.CurrentWorkflowConditionFailedError:
-		return serviceerror.NewUnavailable(err.Msg)
-	case *persistence.TransactionSizeLimitError:
-		return serviceerror.NewInvalidArgument(err.Msg)
-	}
-
 	return err
 }
 
-func validateTaskToken(taskToken *tokenspb.Task) error {
-	if taskToken.GetWorkflowId() == "" {
-		return errWorkflowIDNotSet
-	}
+// validateTaskToken is a placeholder for task token validation logic.
+func validateTaskToken(token interface{}) error {
 	return nil
-}
-
-func (h *Handler) InvokeStateMachineMethod(ctx context.Context, request *historyservice.InvokeStateMachineMethodRequest) (_ *historyservice.InvokeStateMachineMethodResponse, retErr error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retErr)
-	h.startWG.Wait()
-
-	if h.isStopped() {
-		return nil, errShuttingDown
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespace.ID(request.NamespaceId), request.WorkflowId)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	registry := shardContext.StateMachineRegistry()
-
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	ref := hsm.Ref{
-		WorkflowKey:     definition.NewWorkflowKey(request.NamespaceId, request.WorkflowId, request.RunId),
-		StateMachineRef: request.Ref,
-	}
-
-	bytes, err := registry.ExecuteRemoteMethod(
-		ctx,
-		engine.StateMachineEnvironment(metrics.OperationTag(request.MethodName)),
-		ref,
-		request.MethodName,
-		request.Input,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return &historyservice.InvokeStateMachineMethodResponse{
-		Output: bytes,
-	}, nil
-}
-
-func (h *Handler) SyncWorkflowState(ctx context.Context, request *historyservice.SyncWorkflowStateRequest) (_ *historyservice.SyncWorkflowStateResponse, retError error) {
-	defer log.CapturePanic(h.logger, &retError)
-	h.startWG.Wait()
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	if namespaceID == "" {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-	workflowID := request.Execution.WorkflowId
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	response, err := engine.SyncWorkflowState(ctx, request)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	return response, nil
-}
-
-func (h *Handler) UpdateActivityOptions(
-	ctx context.Context, request *historyservice.UpdateActivityOptionsRequest,
-) (response *historyservice.UpdateActivityOptionsResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	workflowID := request.GetUpdateRequest().GetExecution().GetWorkflowId()
-	if request.GetNamespaceId() == "" {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	response, err = engine.UpdateActivityOptions(ctx, request)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	return response, nil
-}
-
-func (h *Handler) PauseActivity(
-	ctx context.Context, request *historyservice.PauseActivityRequest,
-) (response *historyservice.PauseActivityResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	workflowID := request.GetFrontendRequest().GetExecution().GetWorkflowId()
-	if request.GetNamespaceId() == "" {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	response, err = engine.PauseActivity(ctx, request)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	return response, nil
-}
-
-func (h *Handler) UnpauseActivity(
-	ctx context.Context, request *historyservice.UnpauseActivityRequest,
-) (response *historyservice.UnpauseActivityResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	workflowID := request.GetFrontendRequest().GetExecution().GetWorkflowId()
-	if request.GetNamespaceId() == "" {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	response, err = engine.UnpauseActivity(ctx, request)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	return response, nil
-}
-
-func (h *Handler) ResetActivity(
-	ctx context.Context, request *historyservice.ResetActivityRequest,
-) (response *historyservice.ResetActivityResponse, retError error) {
-	defer metrics.CapturePanic(h.logger, h.metricsHandler, &retError)
-	h.startWG.Wait()
-
-	namespaceID := namespace.ID(request.GetNamespaceId())
-	workflowID := request.GetFrontendRequest().GetExecution().GetWorkflowId()
-	if request.GetNamespaceId() == "" {
-		return nil, h.convertError(errNamespaceNotSet)
-	}
-
-	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	engine, err := shardContext.GetEngine(ctx)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-
-	response, err = engine.ResetActivity(ctx, request)
-	if err != nil {
-		return nil, h.convertError(err)
-	}
-	return response, nil
 }
